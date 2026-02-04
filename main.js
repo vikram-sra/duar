@@ -40,11 +40,11 @@ class DuarApp {
     init() {
         this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.camera.position.set(...CONFIG.scene.camera.startPosition);
-        this.camera.lookAt(0, 0, -8);
+        this.camera.lookAt(0, 5, -8);
 
         this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", alpha: false });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(1); // Force 1:1 pixel ratio
+        this.renderer.setPixelRatio(window.devicePixelRatio); // High resolution
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.8;
         this.renderer.outputEncoding = THREE.sRGBEncoding;
@@ -56,10 +56,11 @@ class DuarApp {
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         // Half-resolution bloom for performance
-        this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2), 0.6, 0.5, 0.8);
+        this.bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.6, 0.5, 0.8);
         this.composer.addPass(this.bloomPass);
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.target.set(0, 5, -8);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.03;
         this.controls.minDistance = 2; // Allow closer zoom
@@ -90,13 +91,24 @@ class DuarApp {
         });
 
         window.addEventListener('pointermove', (e) => {
+            if (isDragging) return;
             if (Math.abs(e.clientX - startX) > 5 || Math.abs(e.clientY - startY) > 5) {
                 isDragging = true;
             }
         });
 
-        window.addEventListener('click', (e) => {
-            if (!isDragging) this.onClick(e);
+        window.addEventListener('pointerup', (e) => {
+            if (!isDragging) {
+                // Double check distance to ensure it's a tap
+                const dist = Math.sqrt(Math.pow(e.clientX - startX, 2) + Math.pow(e.clientY - startY, 2));
+                if (dist < 10) { // Slight tolerance
+                    this.onClick(e);
+                }
+            }
+        });
+
+        window.addEventListener('pointercancel', () => {
+            isDragging = true; // Cancel interaction
         });
 
         this.animate();
