@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Duar - An immersive 3D portal experience to explore different dimensions" />
+  <title>Duar - Sunset Garden Portal</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: radial-gradient(circle at center, #3a4b60 0%, #1e2530 100%);
+      font-family: 'Outfit', sans-serif;
+      cursor: crosshair;
+    }
+
+    #app {
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .ui-overlay {
+      position: absolute;
+      top: 50px;
+      left: 50px;
+      color: white;
+      pointer-events: none;
+      text-shadow: 0 8px 16px rgba(0, 0, 0, 0.6);
+      z-index: 10;
+      opacity: 0;
+      animation: fadeInSlide 2s cubic-bezier(0.165, 0.84, 0.44, 1) forwards 0.3s;
+    }
+
+    @keyframes fadeInSlide {
+      from {
+        opacity: 0;
+        transform: translateY(-30px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 4.5rem;
+      letter-spacing: 1.2rem;
+      font-weight: 200;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #fff 0%, #ffd1a4 50%, #ff9a76 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 4px 8px rgba(255, 154, 118, 0.3));
+      animation: shimmer 3s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+
+      0%,
+      100% {
+        filter: drop-shadow(0 4px 8px rgba(255, 154, 118, 0.3));
+      }
+
+      50% {
+        filter: drop-shadow(0 4px 16px rgba(255, 154, 118, 0.6));
+      }
+    }
+
+    .ui-overlay p {
+      font-size: 1.1rem;
+      letter-spacing: 0.3rem;
+      font-weight: 300;
+      opacity: 0.9;
+      text-transform: uppercase;
+      color: #ffd1a4;
+    }
+
+    .door-label {
+      position: absolute;
+      color: white;
+      background: linear-gradient(135deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.3) 100%);
+      padding: 12px 28px;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.25rem;
+      pointer-events: none;
+      transform: translate(-50%, -100%);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1.5px solid rgba(255, 255, 255, 0.2);
+      white-space: nowrap;
+      opacity: 0;
+      transition: all 0.5s cubic-bezier(0.165, 0.84, 0.44, 1);
+      box-shadow:
+        0 15px 35px rgba(0, 0, 0, 0.3),
+        0 5px 15px rgba(0, 0, 0, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      z-index: 5;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    }
+
+    .instructions {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 0.9rem;
+      letter-spacing: 0.15rem;
+      text-align: center;
+      pointer-events: none;
+      z-index: 10;
+      opacity: 0;
+      animation: fadeInSlide 2s cubic-bezier(0.165, 0.84, 0.44, 1) forwards 1s;
+    }
+
+    .instructions span {
+      display: inline-block;
+      padding: 8px 16px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 4px;
+      margin: 0 5px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 1.5rem;
+      letter-spacing: 0.5rem;
+      z-index: 100;
+      opacity: 1;
+      transition: opacity 1s;
+      pointer-events: none;
+    }
+
+    .loading.hidden {
+      opacity: 0;
+    }
+
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 2.5rem;
+        letter-spacing: 0.5rem;
+      }
+
+      .ui-overlay {
+        top: 20px;
+        left: 20px;
+      }
+
+      .door-label {
+        font-size: 12px;
+        padding: 8px 16px;
+        letter-spacing: 0.15rem;
+      }
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <div class="loading" id="loading">LOADING...</div>
+  <div id="app"></div>
+  <div class="instructions">
+    <span>CLICK</span> to enter a portal
+    <span>DRAG</span> to explore
+    <span>SCROLL</span> to zoom
+  </div>
+  <script type="module" src="/main.js"></script>
+  <script>
+    // Hide loading screen after scene loads
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        document.getElementById('loading').classList.add('hidden');
+      }, 1000);
+    });
+  </script>
+</body>
+
+</html>
