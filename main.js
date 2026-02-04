@@ -77,7 +77,27 @@ class DuarApp {
 
         window.addEventListener('resize', () => this.onResize(), { passive: true });
         window.addEventListener('mousemove', (e) => this.onMouseMove(e), { passive: true });
-        window.addEventListener('click', () => this.onClick());
+
+        // Handle click vs drag distinction for mobile/desktop
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+
+        window.addEventListener('pointerdown', (e) => {
+            isDragging = false;
+            startX = e.clientX;
+            startY = e.clientY;
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if (Math.abs(e.clientX - startX) > 5 || Math.abs(e.clientY - startY) > 5) {
+                isDragging = true;
+            }
+        });
+
+        window.addEventListener('click', (e) => {
+            if (!isDragging) this.onClick(e);
+        });
 
         this.animate();
     }
@@ -85,7 +105,12 @@ class DuarApp {
     // ... setupLighting and setupEnvironment are fine ...
 
     // Improved reliable click handler
-    onClick() {
+    onClick(event) {
+        // Calculate mouse position based on the click event directly
+        // This ensures it works for taps even if mousemove hasn't fired
+        this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
         this.raycaster.setFromCamera(this.mouse, this.camera);
         const hits = this.raycaster.intersectObjects(this.scene.children, true);
 
