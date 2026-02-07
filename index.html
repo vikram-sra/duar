@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description" content="Duar - An immersive 3D portal experience to explore different dimensions" />
   <title>Duar - Sunset Garden Portal</title>
   <style>
@@ -25,15 +25,15 @@
 
     #app {
       width: 100vw;
-      height: 100vh;
+      height: 100dvh;
       touch-action: none;
       /* Prevent browser scrolling/gestures */
     }
 
     .ui-overlay {
       position: absolute;
-      top: 50px;
-      left: 50px;
+      top: calc(50px + env(safe-area-inset-top));
+      left: calc(50px + env(safe-area-inset-left));
       color: white;
       pointer-events: none;
       text-shadow: 0 8px 16px rgba(0, 0, 0, 0.6);
@@ -115,7 +115,7 @@
 
     .instructions {
       position: absolute;
-      bottom: 40px;
+      bottom: calc(40px + env(safe-area-inset-bottom));
       left: 50%;
       transform: translateX(-50%);
       color: rgba(255, 255, 255, 0.7);
@@ -139,21 +139,37 @@
     }
 
     .loading {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      color: white;
-      font-size: 1.5rem;
-      letter-spacing: 0.5rem;
-      z-index: 100;
-      opacity: 1;
-      transition: opacity 1s;
-      pointer-events: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 10000;
+      transition: opacity 0.8s ease;
     }
 
     .loading.hidden {
       opacity: 0;
+      pointer-events: none;
+    }
+
+    .minimal-loader {
+      width: 24px;
+      height: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
 
     @media (max-width: 768px) {
@@ -163,8 +179,8 @@
       }
 
       .ui-overlay {
-        top: 20px;
-        left: 20px;
+        top: calc(20px + env(safe-area-inset-top));
+        left: calc(20px + env(safe-area-inset-left));
       }
 
       .door-label {
@@ -180,16 +196,13 @@
 </head>
 
 <body>
-  <div class="loading" id="loading">LOADING...</div>
+  <div class="loading" id="loading">
+    <div class="minimal-loader"></div>
+  </div>
   <div id="app"></div>
   <script type="module" src="/main.js"></script>
   <script>
-    // Hide loading screen after scene loads
-    window.addEventListener('load', () => {
-      setTimeout(() => {
-        document.getElementById('loading').classList.add('hidden');
-      }, 1000);
-    });
+    // Reveal will be controlled by DuarApp in main.js using LoadingManager
   </script>
 </body>
 
