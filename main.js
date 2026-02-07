@@ -32,8 +32,7 @@ class DuarApp {
         this.mouse = new THREE.Vector2();
         this.time = 0;
         this.particleSystems = [];
-        this.draggedDoor = null;
-        this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0.5); // Plane at y = -0.5
         this.loadingManager = new THREE.LoadingManager();
         this.setupLoadingManager();
 
@@ -54,7 +53,7 @@ class DuarApp {
     }
 
     init() {
-        this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 2500);
         this.camera.position.set(0, 1.6, 25);
         this.camera.lookAt(0, 1.6, 0);
 
@@ -65,7 +64,7 @@ class DuarApp {
         this.renderer.toneMappingExposure = 1.8;
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.VSMShadowMap;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         this.container.appendChild(this.renderer.domElement);
 
         this.renderer.setClearColor(0x000000, 1); // Stay black initially
@@ -73,7 +72,7 @@ class DuarApp {
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         const bloomRes = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
-        this.bloomPass = new UnrealBloomPass(bloomRes, 0.6, 0.5, 0.8);
+        this.bloomPass = new UnrealBloomPass(bloomRes, 1.2, 0.4, 0.2); // Increased strength, lower threshold for glow
         this.composer.addPass(this.bloomPass);
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -384,23 +383,30 @@ class DuarApp {
         this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222244, 0.3);
         this.scene.add(this.hemiLight);
 
-        this.sunDist = 100;
+        this.sunDist = 600;
         this.sunLight = new THREE.DirectionalLight(0xffddaa, 1.5);
         this.sunLight.castShadow = true;
         this.sunLight.shadow.mapSize.width = 4096;
         this.sunLight.shadow.mapSize.height = 4096;
         this.sunLight.shadow.camera.near = 0.5;
-        this.sunLight.shadow.camera.far = 500;
+        this.sunLight.shadow.camera.far = 1000;
         const d = 55;
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
-        this.sunLight.shadow.bias = -0.0005;
+        this.sunLight.shadow.bias = 0;
+        this.sunLight.shadow.normalBias = 0.02;
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
-        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(6, 64, 64), new THREE.MeshBasicMaterial({ map: sunTex, fog: false }));
+        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(30, 64, 64), new THREE.MeshStandardMaterial({
+            map: sunTex,
+            emissiveMap: sunTex,
+            emissive: 0xffaa00,
+            emissiveIntensity: 5.0, // Increased
+            fog: true
+        }));
         this.scene.add(this.sunMesh);
 
         this.moonLight = new THREE.DirectionalLight(0xaaccff, 2.0);
@@ -408,16 +414,25 @@ class DuarApp {
         this.moonLight.shadow.mapSize.width = 4096;
         this.moonLight.shadow.mapSize.height = 4096;
         this.moonLight.shadow.camera.near = 0.5;
-        this.moonLight.shadow.camera.far = 500;
+        this.moonLight.shadow.camera.far = 1000;
         this.moonLight.shadow.camera.left = -55;
         this.moonLight.shadow.camera.right = 55;
         this.moonLight.shadow.camera.top = 55;
         this.moonLight.shadow.camera.bottom = -55;
-        this.moonLight.shadow.bias = -0.0005;
+        this.moonLight.shadow.bias = 0;
+        this.moonLight.shadow.normalBias = 0.02;
         this.scene.add(this.moonLight);
 
         const moonTex = this.generateMoonTexture();
-        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(4, 64, 64), new THREE.MeshStandardMaterial({ map: moonTex, emissiveMap: moonTex, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.9, metalness: 0, fog: false }));
+        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(20, 64, 64), new THREE.MeshStandardMaterial({
+            map: moonTex,
+            emissiveMap: moonTex,
+            emissive: 0xffffff,
+            emissiveIntensity: 3.5, // Increased
+            roughness: 0.9,
+            metalness: 0,
+            fog: true
+        }));
         this.scene.add(this.moonMesh);
     }
 
@@ -509,7 +524,7 @@ class DuarApp {
         this.renderer.setClearColor(color);
 
         // Large Flat Plane Ground
-        const groundGeo = new THREE.PlaneGeometry(2000, 2000, 1, 1);
+        const groundGeo = new THREE.PlaneGeometry(5000, 5000, 1, 1);
         const groundMat = new THREE.MeshStandardMaterial({
             color: 0x2c3e50,
             roughness: 0.9,
@@ -535,7 +550,7 @@ class DuarApp {
                 const z = Math.cos(angle) * currentRadius;
 
                 const group = new THREE.Group();
-                group.position.set(x, 0, z);
+                group.position.set(x, -0.5, z); // Sink deep to eliminate any gap
                 this.scene.add(group);
 
                 // Bringing back spotlights
@@ -567,7 +582,7 @@ class DuarApp {
         const lP = new THREE.Mesh(postGeo, mat); lP.position.set(-0.8, 1.75, 0); lP.castShadow = true; group.add(lP);
         const rP = new THREE.Mesh(postGeo, mat); rP.position.set(0.8, 1.75, 0); rP.castShadow = true; group.add(rP);
         const tP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); tP.position.set(0, 3.55, 0); tP.castShadow = true; group.add(tP);
-        const bP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); bP.position.set(0, 0.05, 0); bP.castShadow = true; group.add(bP);
+        const bP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); bP.position.set(0, 0.0, 0); bP.castShadow = true; group.add(bP);
     }
 
     createSacredGeometry() {
@@ -618,16 +633,30 @@ class DuarApp {
         requestAnimationFrame(() => this.animate());
         this.time += 0.001;
         if (this.sunMesh && this.moonMesh) {
-            this.sunAngle += this.daySpeed * 0.1; const r = this.sunDist;
-            const y = Math.sin(this.sunAngle) * r; const x = Math.cos(this.sunAngle) * r;
-            this.sunLight.position.set(x, y, 0); this.sunMesh.position.set(x, y, 0);
-            this.moonLight.position.set(-x, -y, 0); this.moonMesh.position.set(-x, -y, 0);
-            this.moonMesh.rotation.y = Math.atan2(-x, 0) + Math.PI;
-            const sH = Math.max(0, Math.sin(this.sunAngle)); const mH = Math.max(0, Math.sin(this.sunAngle + Math.PI));
-            this.moonLight.intensity = mH * 4.0;
+            this.sunAngle += this.daySpeed * 0.1;
+            const r = this.sunDist;
+            const zPlane = -this.sunDist * 0.4; // Position celestial bodies further in the distance
+
+            const y = Math.sin(this.sunAngle) * r;
+            const x = Math.cos(this.sunAngle) * r;
+
+            // Sun and Moon on opposite sides of the circle (180 degrees apart)
+            this.sunLight.position.set(x, y, zPlane);
+            this.sunMesh.position.set(x, y, zPlane);
+            this.moonLight.position.set(-x, -y, zPlane); // Opposite side
+            this.moonMesh.position.set(-x, -y, zPlane);
+
+            this.moonMesh.rotation.y = Math.atan2(-x, zPlane) + Math.PI;
+
+            const sH = Math.max(0, Math.sin(this.sunAngle));
+            const mH = Math.max(0, -Math.sin(this.sunAngle));
+
+            // Concurrent cross-fade: when one sets at Pi, the other rises at 0/2Pi
+            this.sunLight.intensity = (Math.sin(this.sunAngle) + 0.1 > 0) ? (sH * 8.0) : 0;
+            this.moonLight.intensity = (-Math.sin(this.sunAngle) + 0.1 > 0) ? (mH * 4.0) : 0;
 
             // Day/Night Cycle Color Shifts
-            const angleMod = this.sunAngle % (Math.PI * 2);
+            const angleMod = ((this.sunAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
             const transitionZone = Math.PI / 3;
 
             // --- SUN SHIFTS (Orange/Red at horizon) ---
@@ -652,6 +681,8 @@ class DuarApp {
                     this.sunLight.color.set(0xffddaa);
                     this.sunLight.intensity = sH * 3.5;
                 }
+            } else {
+                this.sunLight.intensity = 0;
             }
 
             // --- MOON SHIFTS (Pale at horizon) ---
@@ -673,6 +704,8 @@ class DuarApp {
                     this.moonMesh.material.color.set(0xffffff);
                     this.moonMesh.material.emissive.set(0xffffff);
                 }
+            } else {
+                this.moonLight.intensity = 0;
             }
 
             // Ensure sky and ambient light never go pitch black
@@ -682,7 +715,8 @@ class DuarApp {
             currColor.lerp(dayColor, sH);
             currColor.lerp(nightColor, mH * 0.4); // Add moon-tinted blue when moon is rising/up
 
-            this.scene.background = currColor; if (this.scene.fog) this.scene.fog.color = currColor;
+            this.scene.background = currColor;
+            if (this.scene.fog) this.scene.fog.color = currColor;
             this.hemiLight.intensity = 0.15 + (sH * 0.3) + (mH * 0.15); // Ambient never drops below 0.15
             this.hemiLight.color.lerpColors(new THREE.Color(0x4444ff), new THREE.Color(0xffffff), sH);
         }
