@@ -121,30 +121,33 @@ class DuarApp {
                     background: rgba(255, 255, 255, 0.03);
                     backdrop-filter: blur(10px);
                     -webkit-backdrop-filter: blur(10px);
-                    padding: 10px 25px;
-                    border-radius: 10px;
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                    padding: 8px 18px;
+                    border-radius: 12px;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
                     display: flex;
                     align-items: center;
-                    gap: 25px;
-                    transition: all 0.5s ease;
+                    gap: 12px;
+                    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
                 }
                 .chrome-slider {
                     -webkit-appearance: none;
                     width: 100px;
-                    height: 1px;
-                    background: rgba(255, 255, 255, 0.2);
+                    height: 2px;
+                    background: rgba(255, 255, 255, 0.1);
                     outline: none;
                 }
                 .chrome-slider::-webkit-slider-thumb {
                     -webkit-appearance: none;
-                    width: 8px;
-                    height: 18px;
+                    width: 28px;
+                    height: 14px;
                     background: #fff;
                     cursor: pointer;
-                    transition: transform 0.2s;
+                    border: none;
+                    box-shadow: 0 0 10px rgba(255,255,255,0.3);
+                    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
                 }
-                .chrome-slider::-webkit-slider-thumb:hover { transform: scaleY(2); }
+                .chrome-slider::-webkit-slider-thumb:hover { transform: scale(1.2); }
+                .chrome-slider::-webkit-slider-active::-webkit-slider-thumb { transition: none; }
                 .glass-btn {
                     background: transparent;
                     color: rgba(255,255,255,0.3);
@@ -158,7 +161,7 @@ class DuarApp {
                     transition: all 0.3s ease;
                     padding: 0;
                 }
-                .glass-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1; }
+                .glass-btn svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
                 .glass-btn:hover { color: #fff; transform: translateY(-1px); }
                 .glass-btn:active { transform: scale(0.95); }
                 .ui-hidden { opacity: 0; transform: translateY(25px); pointer-events: none; }
@@ -186,9 +189,10 @@ class DuarApp {
         ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
 
         const icons = {
-            random: `<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10"/></svg>`,
-            day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></svg>`,
-            night: `<svg viewBox="0 0 24 24"><path d="M12 5L18 18H6L12 5Z"/></svg>`
+            home: `<svg viewBox="0 0 24 24"><path d="M12 5L5 12L12 19L19 12L12 5Z"/></svg>`,
+            random: `<svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11"/></svg>`,
+            day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5.5"/></svg>`,
+            night: `<svg viewBox="0 0 24 24"><path d="M12 6L18 17H6L12 6Z"/></svg>`
         };
 
         const createBtn = (svg, onClick, title = '') => {
@@ -200,6 +204,8 @@ class DuarApp {
             btn.addEventListener('touchstart', e => e.stopPropagation());
             return btn;
         };
+
+        const homeBtn = createBtn(icons.home, () => this.resetScene(), 'Return Home');
 
         const randBtn = createBtn(icons.random, () => {
             if (this.doors.length === 0) return;
@@ -217,7 +223,7 @@ class DuarApp {
         const sunBtn = createBtn(icons.day, () => { this.sunAngle = Math.PI / 2; this.daySpeed = 0; slider.value = 0; }, 'High Noon');
         const moonBtn = createBtn(icons.night, () => { this.sunAngle = 3 * Math.PI / 2; this.daySpeed = 0; slider.value = 0; }, 'Midnight');
 
-        wrapper.append(randBtn, sunBtn, slider, moonBtn);
+        wrapper.append(homeBtn, randBtn, sunBtn, slider, moonBtn);
         container.appendChild(wrapper);
         document.body.appendChild(container);
 
