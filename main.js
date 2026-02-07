@@ -84,7 +84,7 @@ class DuarApp {
         this.controls.maxDistance = 100;
         this.controls.maxPolarAngle = Math.PI / 2 - 0.05;
 
-        this.scene.fog = new THREE.FogExp2(CONFIG.scene.fog.color, 0.015);
+        this.scene.fog = new THREE.FogExp2(CONFIG.scene.fog.color, 0.002);
         this.scene.background = new THREE.Color(CONFIG.scene.fog.color);
 
         this.setupLighting();
@@ -122,25 +122,25 @@ class DuarApp {
                     background: rgba(255, 255, 255, 0.03);
                     backdrop-filter: blur(10px);
                     -webkit-backdrop-filter: blur(10px);
-                    padding: 5px 15px;
-                    border-radius: 6px;
+                    padding: 10px 25px;
+                    border-radius: 10px;
                     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
                     display: flex;
                     align-items: center;
-                    gap: 16px;
+                    gap: 25px;
                     transition: all 0.5s ease;
                 }
                 .chrome-slider {
                     -webkit-appearance: none;
-                    width: 45px;
+                    width: 100px;
                     height: 1px;
                     background: rgba(255, 255, 255, 0.2);
                     outline: none;
                 }
                 .chrome-slider::-webkit-slider-thumb {
                     -webkit-appearance: none;
-                    width: 5px;
-                    height: 12px;
+                    width: 8px;
+                    height: 18px;
                     background: #fff;
                     cursor: pointer;
                     transition: transform 0.2s;
@@ -150,8 +150,8 @@ class DuarApp {
                     background: transparent;
                     color: rgba(255,255,255,0.3);
                     border: none;
-                    width: 26px;
-                    height: 26px;
+                    width: 40px;
+                    height: 40px;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
@@ -159,14 +159,14 @@ class DuarApp {
                     transition: all 0.3s ease;
                     padding: 0;
                 }
-                .glass-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1; }
+                .glass-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1; }
                 .glass-btn:hover { color: #fff; transform: translateY(-1px); }
                 .glass-btn:active { transform: scale(0.95); }
-                .ui-hidden { opacity: 0; transform: translateY(15px); pointer-events: none; }
+                .ui-hidden { opacity: 0; transform: translateY(25px); pointer-events: none; }
                 
                 @media (max-width: 480px) {
-                    .chrome-slider { width: 30px; }
-                    .glass-bar-wrapper { gap: 10px; }
+                    .chrome-slider { width: 60px; }
+                    .glass-bar-wrapper { gap: 18px; }
                 }
             `;
             document.head.appendChild(style);
@@ -505,7 +505,7 @@ class DuarApp {
 
     setupEnvironment() {
         const color = new THREE.Color(CONFIG.scene.fog.color);
-        this.scene.fog = new THREE.Fog(color, 20, 90);
+        this.scene.fog = new THREE.FogExp2(color, 0.002);
         this.renderer.setClearColor(color);
 
         // Large Flat Plane Ground
