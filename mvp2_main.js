@@ -32,28 +32,14 @@ class DuarApp {
         this.mouse = new THREE.Vector2();
         this.time = 0;
         this.particleSystems = [];
-        this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Ground plane
-        this.loadingManager = new THREE.LoadingManager();
-        this.setupLoadingManager();
+        this.draggedDoor = null;
+        this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
         this.init();
-        // Fallback to reveal scene after 2.5s if loading hangs
-        setTimeout(() => this.revealScene(), 2500);
-    }
-
-    setupLoadingManager() {
-        this.loadingManager.onLoad = () => this.revealScene();
-        this.loadingManager.onError = () => this.revealScene();
-    }
-
-    revealScene() {
-        const loader = document.getElementById('loading');
-        if (loader) loader.classList.add('hidden');
-        if (this.rock) this.rock.visible = true;
     }
 
     init() {
-        this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 2500);
+        this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.camera.position.set(0, 1.6, 25);
         this.camera.lookAt(0, 1.6, 0);
 
@@ -62,17 +48,15 @@ class DuarApp {
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.8;
-        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        this.renderer.outputEncoding = THREE.sRGBEncoding;
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Stable, soft shadows
+        this.renderer.shadowMap.type = THREE.VSMShadowMap;
         this.container.appendChild(this.renderer.domElement);
-
-        this.renderer.setClearColor(0x000000, 1); // Stay black initially
 
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         const bloomRes = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
-        this.bloomPass = new UnrealBloomPass(bloomRes, 1.2, 0.4, 0.2); // Increased strength, lower threshold for glow
+        this.bloomPass = new UnrealBloomPass(bloomRes, 0.6, 0.5, 0.8);
         this.composer.addPass(this.bloomPass);
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -83,7 +67,7 @@ class DuarApp {
         this.controls.maxDistance = 100;
         this.controls.maxPolarAngle = Math.PI / 2 - 0.05;
 
-        this.scene.fog = new THREE.FogExp2(CONFIG.scene.fog.color, 0.002);
+        this.scene.fog = new THREE.FogExp2(CONFIG.scene.fog.color, 0.015);
         this.scene.background = new THREE.Color(CONFIG.scene.fog.color);
 
         this.setupLighting();
@@ -103,9 +87,7 @@ class DuarApp {
         });
 
         this.createTimeControls();
-        const now = new Date();
-        const hours = now.getHours() + now.getMinutes() / 60;
-        this.sunAngle = ((hours - 6) / 24) * Math.PI * 2;
+        this.sunAngle = 0;
         this.daySpeed = 0.05;
 
         this.animate();
@@ -116,98 +98,97 @@ class DuarApp {
             const style = document.createElement('style');
             style.id = 'compact-ui-css';
             style.innerHTML = `
-                .glass-bar-wrapper {
-                    pointer-events: auto;
-                    background: rgba(255, 255, 255, 0.03);
-                    backdrop-filter: blur(10px);
-                    -webkit-backdrop-filter: blur(10px);
-                    padding: 8px 18px;
-                    border-radius: 12px;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    display: flex;
-                    align-items: center;
-                    gap: 12px;
-                    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-                }
                 .chrome-slider {
                     -webkit-appearance: none;
                     width: 100px;
                     height: 2px;
-                    background: rgba(255, 255, 255, 0.1);
+                    background: rgba(255,255,255,0.2);
+                    border-radius: 2px;
                     outline: none;
+                    transition: background 0.2s;
                 }
                 .chrome-slider::-webkit-slider-thumb {
                     -webkit-appearance: none;
-                    width: 28px;
+                    width: 14px;
                     height: 14px;
+                    border-radius: 50%;
                     background: #fff;
+                    box-shadow: 0 0 10px rgba(255,255,255,0.5);
                     cursor: pointer;
                     border: none;
-                    box-shadow: 0 0 10px rgba(255,255,255,0.3);
-                    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                    transition: transform 0.1s, box-shadow 0.2s;
                 }
-                .chrome-slider::-webkit-slider-thumb:hover { transform: scale(1.2); }
-                .chrome-slider::-webkit-slider-active::-webkit-slider-thumb { transition: none; }
+                .chrome-slider::-webkit-slider-thumb:hover { 
+                    transform: scale(1.2); 
+                    box-shadow: 0 0 15px rgba(255,255,255,0.8);
+                }
                 .glass-btn {
-                    background: transparent;
-                    color: rgba(255,255,255,0.3);
-                    border: none;
-                    width: 40px;
-                    height: 40px;
+                    background: rgba(0,0,0,0.6);
+                    color: #fff;
+                    border: 1px solid rgba(255,255,255,0.1);
+                    border-radius: 50%;
+                    width: 32px;
+                    height: 32px;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    transition: all 0.3s ease;
-                    padding: 0;
+                    transition: all 0.2s;
+                    backdrop-filter: blur(5px);
                 }
-                .glass-btn svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
-                .glass-btn:hover { color: #fff; transform: translateY(-1px); }
-                .glass-btn:active { transform: scale(0.95); }
-                .ui-hidden { opacity: 0; transform: translateY(25px); pointer-events: none; }
-                
-                @media (max-width: 480px) {
-                    .chrome-slider { width: 60px; }
-                    .glass-bar-wrapper { gap: 18px; }
+                .glass-btn:hover {
+                    background: rgba(255,255,255,0.1);
+                    border-color: rgba(255,255,255,0.4);
+                    transform: translateY(-2px);
                 }
+                .glass-btn:active { transform: translateY(0); }
+                .ui-hidden { opacity: 0; transform: translateY(20px); pointer-events: none; }
             `;
             document.head.appendChild(style);
         }
 
         const container = document.createElement('div');
         this.uiContainer = container;
-        container.style.cssText = 'position:absolute; bottom:calc(45px + env(safe-area-inset-bottom)); width:100%; display:flex; justify-content:center; z-index:1000; pointer-events:none; transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);';
+        container.style.cssText = 'position:absolute; bottom:30px; width:100%; display:flex; justify-content:center; z-index:1000; pointer-events:none; transition: opacity 0.5s, transform 0.5s;';
 
         const wrapper = document.createElement('div');
-        wrapper.className = 'glass-bar-wrapper';
-        wrapper.onmouseenter = () => this.resetUIHideTimer();
+        wrapper.style.cssText = `
+            pointer-events: auto;
+            background: rgba(10, 10, 10, 0.4);
+            backdrop-filter: blur(12px) saturate(180%);
+            -webkit-backdrop-filter: blur(12px) saturate(180%);
+            padding: 6px 12px;
+            border-radius: 40px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        `;
+
+        wrapper.onmouseenter = () => { wrapper.style.transform = 'scale(1.02)'; this.resetUIHideTimer(); };
+        wrapper.onmouseleave = () => wrapper.style.transform = 'scale(1)';
 
         const slider = document.createElement('input');
         slider.type = 'range'; slider.className = 'chrome-slider';
         slider.min = '0'; slider.max = '0.5'; slider.step = '0.001'; slider.value = '0.05';
         slider.oninput = (e) => { this.daySpeed = parseFloat(e.target.value); this.resetUIHideTimer(); };
+
         ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
 
-        const icons = {
-            home: `<svg viewBox="0 0 24 24"><path d="M12 5L5 12L12 19L19 12L12 5Z"/></svg>`,
-            random: `<svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11"/></svg>`,
-            day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5.5"/></svg>`,
-            night: `<svg viewBox="0 0 24 24"><path d="M12 6L18 17H6L12 6Z"/></svg>`
-        };
-
-        const createBtn = (svg, onClick, title = '') => {
+        const createBtn = (symbol, onClick, fontSize = '14px', title = '') => {
             const btn = document.createElement('button');
             btn.className = 'glass-btn';
-            btn.innerHTML = svg;
+            btn.innerHTML = symbol;
+            btn.style.fontSize = fontSize;
             btn.title = title;
             btn.onclick = (e) => { e.stopPropagation(); onClick(); this.resetUIHideTimer(); };
             btn.addEventListener('touchstart', e => e.stopPropagation());
             return btn;
         };
 
-        const homeBtn = createBtn(icons.home, () => this.resetScene(), 'Return Home');
-
-        const randBtn = createBtn(icons.random, () => {
+        const randBtn = createBtn('&#127922;', () => {
             if (this.doors.length === 0) return;
             const door = this.doors[Math.floor(Math.random() * this.doors.length)];
             const angle = Math.atan2(door.group.position.x, door.group.position.z);
@@ -218,12 +199,12 @@ class DuarApp {
                 onUpdate: () => this.camera.lookAt(0, 1.6, 0)
             });
             if (!door.isOpen) this.toggleDoor(door);
-        }, 'Random Discovery');
+        }, '16px', 'Random Door');
 
-        const sunBtn = createBtn(icons.day, () => { this.sunAngle = Math.PI / 2; this.daySpeed = 0; slider.value = 0; }, 'High Noon');
-        const moonBtn = createBtn(icons.night, () => { this.sunAngle = 3 * Math.PI / 2; this.daySpeed = 0; slider.value = 0; }, 'Midnight');
+        const sunBtn = createBtn('&#9728;', () => { this.sunAngle = Math.PI / 2; this.daySpeed = 0; slider.value = 0; }, '18px', 'High Noon');
+        const moonBtn = createBtn('&#9790;', () => { this.sunAngle = 3 * Math.PI / 2; this.daySpeed = 0; slider.value = 0; }, '16px', 'Midnight');
 
-        wrapper.append(homeBtn, randBtn, sunBtn, slider, moonBtn);
+        wrapper.append(randBtn, sunBtn, slider, moonBtn);
         container.appendChild(wrapper);
         document.body.appendChild(container);
 
@@ -314,10 +295,6 @@ class DuarApp {
             });
             if (hit) {
                 interactedWithObject = true;
-                if (hit.object === this.rock) {
-                    this.resetScene();
-                    return;
-                }
                 let obj = hit.object;
                 while (obj) {
                     const door = this.doors.find(d => d.group === obj);
@@ -340,47 +317,22 @@ class DuarApp {
         if (door.isAnimating) return;
         door.isAnimating = true;
         door.isOpen = !door.isOpen;
-        if (door.isOpen) {
-            const targetPoint = door.group.position.clone();
-            targetPoint.y = 1.75;
-            const currentCamPos = this.camera.position.clone();
-            const direction = new THREE.Vector3().subVectors(currentCamPos, targetPoint).normalize();
-            const dist = 6.0;
-            const targetCamPos = targetPoint.clone().add(direction.multiplyScalar(dist));
-            targetCamPos.y = 1.6;
+        const targetPoint = door.group.position.clone();
+        targetPoint.y = 1.75;
+        const currentCamPos = this.camera.position.clone();
+        const direction = new THREE.Vector3().subVectors(currentCamPos, targetPoint).normalize();
+        const dist = 6.0;
+        const targetCamPos = targetPoint.clone().add(direction.multiplyScalar(dist));
+        targetCamPos.y = 1.6;
 
-            gsap.to(this.controls.target, { x: targetPoint.x, y: targetPoint.y, z: targetPoint.z, duration: 2.5, ease: "power3.inOut" });
-            gsap.to(this.camera.position, { x: targetCamPos.x, y: targetCamPos.y, z: targetCamPos.z, duration: 2.5, ease: "power3.inOut" });
-        }
+        gsap.to(this.controls.target, { x: targetPoint.x, y: targetPoint.y, z: targetPoint.z, duration: 2.5, ease: "power3.inOut" });
+        gsap.to(this.camera.position, { x: targetCamPos.x, y: targetCamPos.y, z: targetCamPos.z, duration: 2.5, ease: "power3.inOut" });
         gsap.to(door.hinge.rotation, {
             y: door.isOpen ? -Math.PI / 2 : 0,
-            duration: 2.0, delay: door.isOpen ? 0.5 : 0, ease: "power2.inOut",
+            duration: 2.0, delay: 0.5, ease: "power2.inOut",
             onComplete: () => { door.isAnimating = false; }
         });
-        if (door.isOpen) {
-            gsap.to(door.light, { intensity: 8, distance: 20, duration: 2.0, delay: 0.5, yoyo: true, repeat: 1 });
-        }
-    }
-
-    resetScene() {
-        this.closeAllDoors();
-        gsap.to(this.controls.target, { x: 0, y: 1.6, z: 0, duration: 2.0, ease: "power2.inOut" });
-        gsap.to(this.camera.position, { x: 0, y: 1.6, z: 25, duration: 2.0, ease: "power2.inOut" });
-    }
-
-    closeAllDoors() {
-        this.doors.forEach(door => {
-            if (door.isOpen) {
-                door.isOpen = false;
-                door.isAnimating = true;
-                gsap.to(door.hinge.rotation, {
-                    y: 0,
-                    duration: 1.5,
-                    ease: "power2.inOut",
-                    onComplete: () => { door.isAnimating = false; }
-                });
-            }
-        });
+        gsap.to(door.light, { intensity: 8, distance: 20, duration: 2.0, delay: 0.5, yoyo: true, repeat: 1 });
     }
 
     setupLighting() {
@@ -389,59 +341,48 @@ class DuarApp {
         this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222244, 0.3);
         this.scene.add(this.hemiLight);
 
-        this.sunDist = 100; // MVP2 standard
+        this.sunDist = 100;
         this.sunLight = new THREE.DirectionalLight(0xffddaa, 1.5);
         this.sunLight.castShadow = true;
-        this.sunLight.shadow.mapSize.width = 8192; // Keeping high resolution
-        this.sunLight.shadow.mapSize.height = 8192;
+        this.sunLight.shadow.mapSize.width = 4096;
+        this.sunLight.shadow.mapSize.height = 4096;
         this.sunLight.shadow.camera.near = 0.5;
-        this.sunLight.shadow.camera.far = 1000;
+        this.sunLight.shadow.camera.far = 500;
         const d = 55;
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
-        this.sunLight.shadow.bias = -0.0002;
-        this.sunLight.shadow.normalBias = 0;
-        this.sunLight.shadow.radius = 3;
+        this.sunLight.shadow.bias = -0.0005;
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
-        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(6, 64, 64), new THREE.MeshStandardMaterial({
-            map: sunTex,
-            emissiveMap: sunTex,
-            emissive: 0xffaa00,
-            emissiveIntensity: 5.0,
-            fog: true
-        }));
+        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(6, 16, 16), new THREE.MeshBasicMaterial({ map: sunTex, color: 0xffcc00, fog: false }));
         this.scene.add(this.sunMesh);
+
+        this.sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.generateGlowTexture(), color: 0xffaa00, transparent: true, blending: THREE.AdditiveBlending, opacity: 1.0, depthWrite: false, fog: false }));
+        this.sunGlow.scale.set(60, 60, 1);
+        this.scene.add(this.sunGlow);
 
         this.moonLight = new THREE.DirectionalLight(0xaaccff, 2.0);
         this.moonLight.castShadow = true;
-        this.moonLight.shadow.mapSize.width = 8192;
-        this.moonLight.shadow.mapSize.height = 8192;
+        this.moonLight.shadow.mapSize.width = 4096;
+        this.moonLight.shadow.mapSize.height = 4096;
         this.moonLight.shadow.camera.near = 0.5;
-        this.moonLight.shadow.camera.far = 1000;
+        this.moonLight.shadow.camera.far = 500;
         this.moonLight.shadow.camera.left = -55;
         this.moonLight.shadow.camera.right = 55;
         this.moonLight.shadow.camera.top = 55;
         this.moonLight.shadow.camera.bottom = -55;
-        this.moonLight.shadow.bias = -0.0002;
-        this.moonLight.shadow.normalBias = 0;
-        this.moonLight.shadow.radius = 3;
+        this.moonLight.shadow.bias = -0.0005;
         this.scene.add(this.moonLight);
 
-        const moonTex = this.generateMoonTexture();
-        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(4, 64, 64), new THREE.MeshStandardMaterial({
-            map: moonTex,
-            emissiveMap: moonTex,
-            emissive: 0xffffff,
-            emissiveIntensity: 3.5,
-            roughness: 0.9,
-            metalness: 0,
-            fog: true
-        }));
+        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(4, 32, 32), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.8, fog: false }));
         this.scene.add(this.moonMesh);
+
+        this.moonGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.generateGlowTexture(), color: 0x4466ff, transparent: true, blending: THREE.AdditiveBlending, opacity: 0.5, fog: false }));
+        this.moonGlow.scale.set(40, 40, 1);
+        this.scene.add(this.moonGlow);
     }
 
     generateGlowTexture() {
@@ -459,80 +400,25 @@ class DuarApp {
 
     generateSunTexture() {
         const canvas = document.createElement('canvas');
-        canvas.width = 1024; canvas.height = 512;
+        canvas.width = 512; canvas.height = 512;
         const ctx = canvas.getContext('2d');
-
-        // Deep solar orange base
-        ctx.fillStyle = '#ff4500';
-        ctx.fillRect(0, 0, 1024, 512);
-
-        // High contrast plasma granules
-        for (let i = 0; i < 40000; i++) {
-            const x = Math.random() * 1024;
-            const y = Math.random() * 512;
-            const r = Math.random() * 2 + 0.5;
-            const val = Math.random();
-            if (val > 0.98) ctx.fillStyle = '#ffffff'; // Hot spots
-            else if (val > 0.7) ctx.fillStyle = '#ffcc00'; // Bright plasma
-            else if (val > 0.4) ctx.fillStyle = '#ff8c00'; // Mid plasma
-            else ctx.fillStyle = '#8B0000'; // Darker cooler spots (sunspots)
-
-            ctx.globalAlpha = Math.random() * 0.5;
-            ctx.beginPath();
-            ctx.arc(x, y, r, 0, Math.PI * 2);
-            ctx.fill();
-        }
-        return new THREE.CanvasTexture(canvas);
-    }
-
-    generateMoonTexture() {
-        const canvas = document.createElement('canvas');
-        canvas.width = 1024; canvas.height = 512;
-        const ctx = canvas.getContext('2d');
-
-        // Lunar grey base
-        ctx.fillStyle = '#d0d0d0';
-        ctx.fillRect(0, 0, 1024, 512);
-
-        // High contrast craters and Maria
-        for (let i = 0; i < 25000; i++) {
-            const x = Math.random() * 1024;
-            const y = Math.random() * 512;
-            const val = Math.random();
-
-            if (val > 0.85) {
-                // Large Maria (dark basaltic plains)
-                ctx.fillStyle = '#2a2a2a';
-                ctx.globalAlpha = 0.3;
-                ctx.beginPath();
-                ctx.arc(x, y, Math.random() * 80 + 20, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (val > 0.5) {
-                // Small Craters
-                ctx.fillStyle = '#ffffff'; // Rim
-                ctx.globalAlpha = 0.4;
-                const r = Math.random() * 4 + 1;
-                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-
-                ctx.fillStyle = '#444444'; // Core
-                ctx.beginPath(); ctx.arc(x + 1, y + 1, r * 0.8, 0, Math.PI * 2); ctx.fill();
-            } else {
-                // Surface noise
-                ctx.fillStyle = Math.random() > 0.5 ? '#fcfcfc' : '#888888';
-                ctx.globalAlpha = 0.1;
-                ctx.fillRect(x, y, 2, 2);
-            }
+        ctx.fillStyle = '#ffffaa'; ctx.fillRect(0, 0, 512, 512);
+        for (let i = 0; i < 8000; i++) {
+            const x = Math.random() * 512; const y = Math.random() * 512; const r = Math.random() * 25 + 5;
+            const rand = Math.random();
+            if (rand > 0.6) ctx.fillStyle = '#ffcc00'; else if (rand > 0.3) ctx.fillStyle = '#ff4500'; else ctx.fillStyle = '#ff0000';
+            ctx.globalAlpha = 0.2; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
         }
         return new THREE.CanvasTexture(canvas);
     }
 
     setupEnvironment() {
-        const color = new THREE.Color(CONFIG.scene.fog.color);
-        this.scene.fog = new THREE.FogExp2(color, 0.002);
+        const color = 0x000000;
+        this.scene.fog = new THREE.Fog(color, 150, 600);
         this.renderer.setClearColor(color);
 
         // Large Flat Plane Ground
-        const groundGeo = new THREE.PlaneGeometry(5000, 5000, 1, 1);
+        const groundGeo = new THREE.PlaneGeometry(2000, 2000, 1, 1);
         const groundMat = new THREE.MeshStandardMaterial({
             color: 0x2c3e50,
             roughness: 0.9,
@@ -548,7 +434,7 @@ class DuarApp {
     }
 
     setupDoors() {
-        const loader = new GLTFLoader(this.loadingManager);
+        const loader = new GLTFLoader();
         const numRings = 5; const baseRadius = 15; const radiusStep = 8;
         for (let r = 0; r < numRings; r++) {
             const currentRadius = baseRadius + (r * radiusStep);
@@ -558,10 +444,9 @@ class DuarApp {
                 const z = Math.cos(angle) * currentRadius;
 
                 const group = new THREE.Group();
-                group.position.set(x, 0, z);
+                group.position.set(x, 0, z); // Standard flat positioning
                 this.scene.add(group);
 
-                // Bringing back spotlights
                 const light = new THREE.SpotLight(data.color, 4, 40, 0.5, 0.5, 1);
                 light.position.set(0, 20, 0); light.castShadow = false;
                 group.add(light);
@@ -573,13 +458,11 @@ class DuarApp {
 
                 loader.load(data.modelPath, (gltf) => {
                     const model = gltf.scene; const panel = model.getObjectByName('Door') || model;
-                    model.traverse(o => { if (o.isMesh) { o.material = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.4, metalness: 0.2 }); o.castShadow = true; o.receiveShadow = true; } });
-                    // Sink panel slightly into ground for shadow contact
-                    panel.position.set(0.75, -0.02, 0); hinge.add(panel); doorObj.panel = panel;
+                    model.traverse(o => { if (o.isMesh) { o.material = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.2, metalness: 0.7 }); o.castShadow = true; o.receiveShadow = true; } });
+                    panel.position.set(0.75, 0, 0); hinge.add(panel); doorObj.panel = panel;
                 }, null, () => {
-                    // Monolith: height 3.6 (extended), center at 1.78 means bottom at -0.02
-                    const monolith = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.6, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.2 }));
-                    monolith.position.set(0.75, 1.78, 0); monolith.castShadow = true; monolith.receiveShadow = true; hinge.add(monolith); doorObj.panel = monolith;
+                    const monolith = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.5, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2, metalness: 0.8 }));
+                    monolith.position.set(0.75, 1.75, 0); monolith.castShadow = true; monolith.receiveShadow = true; hinge.add(monolith); doorObj.panel = monolith;
                 });
                 this.doors.push(doorObj);
             });
@@ -587,21 +470,12 @@ class DuarApp {
     }
 
     createDoorFrame(group, data) {
-        const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5, metalness: 0.5 });
-        // Extended posts: 3.6m tall, bottom sinks into ground
-        const postGeo = new THREE.BoxGeometry(0.1, 3.6, 0.1);
-
-        // Posts: center at 1.78 means bottom at -0.02 (below ground)
-        const lP = new THREE.Mesh(postGeo, mat); lP.position.set(-0.8, 1.78, 0); lP.castShadow = true; group.add(lP);
-        const rP = new THREE.Mesh(postGeo, mat); rP.position.set(0.8, 1.78, 0); rP.castShadow = true; group.add(rP);
-
-        // Top plate
-        const tP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); tP.position.set(0, 3.58, 0); tP.castShadow = true; group.add(tP);
-
-        // Base: extend into ground for shadow contact
-        const bP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.12, 0.1), mat);
-        bP.position.set(0, 0.04, 0); // Bottom at -0.02
-        bP.castShadow = true; bP.receiveShadow = true; group.add(bP);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.2, metalness: 0.8 });
+        const postGeo = new THREE.BoxGeometry(0.1, 3.5, 0.1);
+        const lP = new THREE.Mesh(postGeo, mat); lP.position.set(-0.8, 1.75, 0); lP.castShadow = true; group.add(lP);
+        const rP = new THREE.Mesh(postGeo, mat); rP.position.set(0.8, 1.75, 0); rP.castShadow = true; group.add(rP);
+        const tP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); tP.position.set(0, 3.55, 0); tP.castShadow = true; group.add(tP);
+        const bP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); bP.position.set(0, 0.05, 0); bP.castShadow = true; group.add(bP);
     }
 
     createSacredGeometry() {
@@ -617,18 +491,62 @@ class DuarApp {
 
     createCentralRock() {
         const geo = new THREE.ConeGeometry(1.5, 3.0, 64, 32); geo.translate(0, 1.5, 0);
-        const mat = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            roughness: 0.05,
-            metalness: 1.0,
-            envMapIntensity: 1.0
+        const mat = new THREE.ShaderMaterial({
+            uniforms: { time: { value: 0 }, color: { value: new THREE.Color(0x020202) }, emissive: { value: new THREE.Color(0x110000) } },
+            vertexShader: `
+                uniform float time; varying vec2 vUv; varying vec3 vNormal; varying float vDisplace; varying vec3 vPos;
+                vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+                vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+                vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+                vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+                float snoise(vec3 v) { 
+                    const vec2 C = vec2(1.0/6.0, 1.0/3.0); const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+                    vec3 i = floor(v + dot(v, C.yyy)); vec3 x0 = v - i + dot(i, C.xxx);
+                    vec3 g = step(x0.yzx, x0.xyz); vec3 l = 1.0 - g; vec3 i1 = min( g.xyz, l.zxy ); vec3 i2 = max( g.xyz, l.zxy );
+                    vec3 x1 = x0 - i1 + C.xxx; vec3 x2 = x0 - i2 + C.yyy; vec3 x3 = x0 - D.yyy;
+                    i = mod289(i); vec4 p = permute( permute( permute( i.z + vec4(0.0, i1.z, i2.z, 1.0 )) + i.y + vec4(0.0, i1.y, i2.y, 1.0 )) + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+                    float n_ = 0.142857142857; vec3 ns = n_ * D.wyz - D.xzx; vec4 j = p - 49.0 * floor(p * ns.z * ns.z); 
+                    vec4 x_ = floor(j * ns.z); vec4 y_ = floor(j - 7.0 * x_ ); vec4 x = x_ *ns.x + ns.yyyy; vec4 y = y_ *ns.x + ns.yyyy;
+                    vec4 h = 1.0 - abs(x) - abs(y); vec4 b0 = vec4( x.xy, y.xy ); vec4 b1 = vec4( x.zw, y.zw );
+                    vec4 s0 = floor(b0)*2.0 + 1.0; vec4 s1 = floor(b1)*2.0 + 1.0; vec4 sh = -step(h, vec4(0.0));
+                    vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy; vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+                    vec3 p0 = vec3(a0.xy,h.x); vec3 p1 = vec3(a0.zw,h.y); vec3 p2 = vec3(a1.xy,h.z); vec3 p3 = vec3(a1.zw,h.w);
+                    vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                    p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+                    vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0); m = m * m;
+                    return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+                }
+                void main() {
+                    vUv = uv; vNormal = normal; vec3 pos = position;
+                    float n = snoise(pos * 0.8 + vec3(time * 0.1)); 
+                    float displacement = n * 0.3; float spikes = smoothstep(0.4, 1.0, n) * 0.5;
+                    vec3 noisyPos = pos + normal * (displacement + spikes);
+                    vDisplace = n; vPos = noisyPos; gl_Position = projectionMatrix * modelViewMatrix * vec4(noisyPos, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float time; uniform vec3 color; uniform vec3 emissive;
+                varying float vDisplace; varying vec3 vNormal; varying vec3 vPos;
+                void main() {
+                    vec3 base = color; base += vec3(0.05) * vDisplace;
+                    vec3 lightDir = normalize(vec3(80.0, 15.0, 80.0)); vec3 viewDir = normalize(cameraPosition - vPos);
+                    vec3 halfDir = normalize(lightDir + viewDir); float NdotH = max(dot(normalize(vNormal), halfDir), 0.0);
+                    float shine = pow(NdotH, 100.0); float fresnel = pow(1.0 - abs(dot(vNormal, viewDir)), 3.0);
+                    vec3 finalColor = base + (vec3(0.1) * fresnel) + (vec3(1.0) * shine * 2.0);
+                    gl_FragColor = vec4(finalColor, 1.0);
+                }
+            `
         });
-        this.rock = new THREE.Mesh(geo, mat);
-        this.rock.castShadow = true;
-        this.rock.receiveShadow = true;
-        this.rock.visible = false;
-        this.scene.add(this.rock);
-
+        this.rock = new THREE.Mesh(geo, mat); this.rock.castShadow = true; this.rock.receiveShadow = true; this.scene.add(this.rock);
+        const pCount = 60; const pGeo = new THREE.BufferGeometry(); const pPos = new Float32Array(pCount * 3); const pSpeeds = new Float32Array(pCount);
+        for (let i = 0; i < pCount; i++) {
+            const angle = Math.random() * Math.PI * 2; const r = Math.random() * 1.5 + 0.5;
+            pPos[i * 3] = Math.cos(angle) * r; pPos[i * 3 + 1] = Math.random() * 3.0; pPos[i * 3 + 2] = Math.sin(angle) * r;
+            pSpeeds[i] = 0.005 + Math.random() * 0.01;
+        }
+        pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+        this.rockFlares = new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0x888888, size: 0.05, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending }));
+        this.rockFlares.userData = { speeds: pSpeeds }; this.scene.add(this.rockFlares);
     }
 
     setupDustMotes() {
@@ -652,35 +570,24 @@ class DuarApp {
         requestAnimationFrame(() => this.animate());
         this.time += 0.001;
         if (this.sunMesh && this.moonMesh) {
-            this.sunAngle += this.daySpeed * 0.1;
-            const r = this.sunDist;
-            const y = Math.sin(this.sunAngle) * r;
-            const x = Math.cos(this.sunAngle) * r;
-
-            this.sunLight.position.set(x, y, 0);
-            this.sunMesh.position.set(x, y, 0);
-            this.moonLight.position.set(-x, -y, 0);
-            this.moonMesh.position.set(-x, -y, 0);
-
+            this.sunAngle += this.daySpeed * 0.1; const r = this.sunDist;
+            const y = Math.sin(this.sunAngle) * r; const x = Math.cos(this.sunAngle) * r;
+            this.sunLight.position.set(x, y, 0); this.sunMesh.position.set(x, y, 0); this.sunGlow.position.set(x, y, 0);
+            this.moonLight.position.set(-x, -y, 0); this.moonMesh.position.set(-x, -y, 0); this.moonGlow.position.set(-x, -y, 0);
             this.moonMesh.rotation.y = Math.atan2(-x, 0) + Math.PI;
-
-            const sH = Math.max(0, Math.sin(this.sunAngle));
-            const mH = Math.max(0, Math.sin(this.sunAngle + Math.PI));
-
-            this.sunLight.intensity = sH * 1.5;
-            this.moonLight.intensity = mH * 2.0;
-
+            const sH = Math.max(0, Math.sin(this.sunAngle)); const mH = Math.max(0, Math.sin(this.sunAngle + Math.PI));
+            this.sunLight.intensity = sH * 1.5; this.moonLight.intensity = mH * 2.0;
             const currColor = new THREE.Color(0x000000).lerp(new THREE.Color(0x2c3e50), sH);
-            this.scene.background = currColor;
-            if (this.scene.fog) this.scene.fog.color = currColor;
-
+            this.scene.background = currColor; if (this.scene.fog) this.scene.fog.color = currColor;
             this.hemiLight.intensity = 0.1 + (sH * 0.3);
         }
         if (this.rings) this.rings.forEach(r => r.mesh.rotation.z += r.speed);
-        if (this.rock) {
-            // No time uniform to update
+        if (this.rock) this.rock.material.uniforms.time.value = this.time;
+        if (this.rockFlares) {
+            const pos = this.rockFlares.geometry.attributes.position.array; const spd = this.rockFlares.userData.speeds;
+            for (let i = 0; i < pos.length; i += 3) { pos[i + 1] += spd[i / 3]; if (pos[i + 1] > 1.5) pos[i + 1] = 0; }
+            this.rockFlares.geometry.attributes.position.needsUpdate = true;
         }
-
         if (this.dust) {
             const pos = this.dust.geometry.attributes.position.array;
             for (let i = 0; i < pos.length; i += 3) pos[i + 1] += Math.sin(this.time * 5 + pos[i]) * 0.002;
