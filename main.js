@@ -121,54 +121,51 @@ class DuarApp {
                     background: rgba(255, 255, 255, 0.03);
                     backdrop-filter: blur(10px);
                     -webkit-backdrop-filter: blur(10px);
-                    padding: 8px 18px;
+                    padding: 4px 12px;
                     border-radius: 12px;
                     border: 1px solid rgba(255, 255, 255, 0.1);
                     display: flex;
                     align-items: center;
-                    gap: 12px;
-                    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+                    gap: 8px;
                 }
                 .chrome-slider {
                     -webkit-appearance: none;
-                    width: 100px;
+                    width: 140px;
                     height: 2px;
                     background: rgba(255, 255, 255, 0.1);
                     outline: none;
                 }
                 .chrome-slider::-webkit-slider-thumb {
                     -webkit-appearance: none;
-                    width: 28px;
-                    height: 14px;
+                    width: 24px;
+                    height: 12px;
                     background: #fff;
                     cursor: pointer;
                     border: none;
                     box-shadow: 0 0 10px rgba(255,255,255,0.3);
-                    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
                 }
-                .chrome-slider::-webkit-slider-thumb:hover { transform: scale(1.2); }
-                .chrome-slider::-webkit-slider-active::-webkit-slider-thumb { transition: none; }
+                .chrome-slider::-webkit-slider-thumb:hover { transform: scale(1.1); }
                 .glass-btn {
                     background: transparent;
                     color: rgba(255,255,255,0.3);
                     border: none;
-                    width: 40px;
-                    height: 40px;
+                    width: 28px;
+                    height: 28px;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    transition: all 0.3s ease;
+                    transition: color 0.1s ease;
                     padding: 0;
                 }
-                .glass-btn svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
-                .glass-btn:hover { color: #fff; transform: translateY(-1px); }
+                .glass-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+                .glass-btn:hover { color: #fff; }
                 .glass-btn:active { transform: scale(0.95); }
-                .ui-hidden { opacity: 0; transform: translateY(25px); pointer-events: none; }
+                .ui-hidden { opacity: 0; transform: translateY(12px); pointer-events: none; }
                 
                 @media (max-width: 480px) {
-                    .chrome-slider { width: 60px; }
-                    .glass-bar-wrapper { gap: 18px; }
+                    .chrome-slider { width: 90px; }
+                    .glass-bar-wrapper { gap: 6px; padding: 4px 10px; }
                 }
             `;
             document.head.appendChild(style);
@@ -189,10 +186,10 @@ class DuarApp {
         ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
 
         const icons = {
-            home: `<svg viewBox="0 0 24 24"><path d="M12 5L5 12L12 19L19 12L12 5Z"/></svg>`,
-            random: `<svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11"/></svg>`,
-            day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5.5"/></svg>`,
-            night: `<svg viewBox="0 0 24 24"><path d="M12 6L18 17H6L12 6Z"/></svg>`
+            home: `<svg viewBox="0 0 24 24"><path d="M12 3L3 12L12 21L21 12L12 3Z"/></svg>`, // Diamond
+            random: `<svg viewBox="0 0 24 24"><path d="M4 4h4v4H4zm12 0h4v4h-4zM4 16h4v4H4zm12 0h4v4h-4z"/></svg>`, // Pixel/Grid
+            day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 1v1.5M12 21.5V23M1 12h1.5M21.5 12H23"/></svg>`, // Minimalist Sun
+            night: `<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>` // Minimal Crescent
         };
 
         const createBtn = (svg, onClick, title = '') => {
