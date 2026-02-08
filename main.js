@@ -32,7 +32,7 @@ class DuarApp {
         this.mouse = new THREE.Vector2();
         this.time = 0;
         this.particleSystems = [];
-        this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0.5); // Plane at y = -0.5
+        this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Ground plane
         this.loadingManager = new THREE.LoadingManager();
         this.setupLoadingManager();
 
@@ -64,7 +64,7 @@ class DuarApp {
         this.renderer.toneMappingExposure = 1.8;
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer, premium edges
         this.container.appendChild(this.renderer.domElement);
 
         this.renderer.setClearColor(0x000000, 1); // Stay black initially
@@ -392,17 +392,18 @@ class DuarApp {
         this.sunDist = 600;
         this.sunLight = new THREE.DirectionalLight(0xffddaa, 1.5);
         this.sunLight.castShadow = true;
-        this.sunLight.shadow.mapSize.width = 4096;
-        this.sunLight.shadow.mapSize.height = 4096;
+        this.sunLight.shadow.mapSize.width = 8192;
+        this.sunLight.shadow.mapSize.height = 8192;
         this.sunLight.shadow.camera.near = 0.5;
         this.sunLight.shadow.camera.far = 1000;
-        const d = 55;
+        const d = 45;
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
-        this.sunLight.shadow.bias = 0;
-        this.sunLight.shadow.normalBias = 0.02;
+        this.sunLight.shadow.bias = -0.0005; // Standard bias to prevent acne
+        this.sunLight.shadow.normalBias = 0.0; // ZERO normal bias to prevent contact gaps
+        this.sunLight.shadow.radius = 1;
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
@@ -421,12 +422,12 @@ class DuarApp {
         this.moonLight.shadow.mapSize.height = 4096;
         this.moonLight.shadow.camera.near = 0.5;
         this.moonLight.shadow.camera.far = 1000;
-        this.moonLight.shadow.camera.left = -55;
-        this.moonLight.shadow.camera.right = 55;
-        this.moonLight.shadow.camera.top = 55;
-        this.moonLight.shadow.camera.bottom = -55;
-        this.moonLight.shadow.bias = 0;
-        this.moonLight.shadow.normalBias = 0.02;
+        this.moonLight.shadow.camera.left = -50;
+        this.moonLight.shadow.camera.right = 50;
+        this.moonLight.shadow.camera.top = 50;
+        this.moonLight.shadow.camera.bottom = -50;
+        this.moonLight.shadow.bias = -0.0005;
+        this.moonLight.shadow.normalBias = 0.0;
         this.scene.add(this.moonLight);
 
         const moonTex = this.generateMoonTexture();
@@ -556,7 +557,7 @@ class DuarApp {
                 const z = Math.cos(angle) * currentRadius;
 
                 const group = new THREE.Group();
-                group.position.set(x, -0.5, z); // Sink deep to eliminate any gap
+                group.position.set(x, 0, z); // Back to ground for solid shadows
                 this.scene.add(group);
 
                 // Bringing back spotlights
@@ -572,10 +573,12 @@ class DuarApp {
                 loader.load(data.modelPath, (gltf) => {
                     const model = gltf.scene; const panel = model.getObjectByName('Door') || model;
                     model.traverse(o => { if (o.isMesh) { o.material = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.4, metalness: 0.2 }); o.castShadow = true; o.receiveShadow = true; } });
-                    panel.position.set(0.75, 0, 0); hinge.add(panel); doorObj.panel = panel;
+                    // Embed panel INTO the base (0.02) to merge shadows completely
+                    panel.position.set(0.75, 0.02, 0); hinge.add(panel); doorObj.panel = panel;
                 }, null, () => {
                     const monolith = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.5, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.2 }));
-                    monolith.position.set(0.75, 1.75, 0); monolith.castShadow = true; monolith.receiveShadow = true; hinge.add(monolith); doorObj.panel = monolith;
+                    // Embed monolith INTO the base
+                    monolith.position.set(0.75, 1.77, 0); monolith.castShadow = true; monolith.receiveShadow = true; hinge.add(monolith); doorObj.panel = monolith;
                 });
                 this.doors.push(doorObj);
             });
@@ -584,11 +587,24 @@ class DuarApp {
 
     createDoorFrame(group, data) {
         const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5, metalness: 0.5 });
-        const postGeo = new THREE.BoxGeometry(0.1, 3.5, 0.1);
-        const lP = new THREE.Mesh(postGeo, mat); lP.position.set(-0.8, 1.75, 0); lP.castShadow = true; group.add(lP);
-        const rP = new THREE.Mesh(postGeo, mat); rP.position.set(0.8, 1.75, 0); rP.castShadow = true; group.add(rP);
-        const tP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); tP.position.set(0, 3.55, 0); tP.castShadow = true; group.add(tP);
-        const bP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); bP.position.set(0, 0.0, 0); bP.castShadow = true; group.add(bP);
+        const postGeo = new THREE.BoxGeometry(0.12, 3.5, 0.12);
+
+        // Base: Widen to 1.8 to engulf post bottoms. 
+        // Height 0.05, Depth 0.12.
+        const bP = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.05, 0.12), mat);
+        bP.position.set(0, 0.025, 0);
+        bP.castShadow = true; bP.receiveShadow = true; group.add(bP);
+
+        // Posts: Start from ground (0) to overlap the base completely.
+        const lP = new THREE.Mesh(postGeo, mat); lP.position.set(-0.8, 1.75, 0);
+        lP.castShadow = true; group.add(lP);
+
+        const rP = new THREE.Mesh(postGeo, mat); rP.position.set(0.8, 1.75, 0);
+        rP.castShadow = true; group.add(rP);
+
+        // Top plate
+        const tP = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.1, 0.12), mat);
+        tP.position.set(0, 3.55, 0); tP.castShadow = true; group.add(tP);
     }
 
     createSacredGeometry() {
