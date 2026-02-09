@@ -386,10 +386,10 @@ class DuarApp {
         this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222244, 0.3);
         this.scene.add(this.hemiLight);
 
-        this.sunDist = 100; // MVP2 standard
+        this.sunDist = 600;
         this.sunLight = new THREE.DirectionalLight(0xffddaa, 1.5);
         this.sunLight.castShadow = true;
-        this.sunLight.shadow.mapSize.width = 8192; // Keeping high resolution
+        this.sunLight.shadow.mapSize.width = 8192;
         this.sunLight.shadow.mapSize.height = 8192;
         this.sunLight.shadow.camera.near = 0.5;
         this.sunLight.shadow.camera.far = 1000;
@@ -398,13 +398,13 @@ class DuarApp {
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
-        this.sunLight.shadow.bias = -0.0002;
+        this.sunLight.shadow.bias = -0.0000;
         this.sunLight.shadow.normalBias = 0;
         this.sunLight.shadow.radius = 3;
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
-        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(6, 64, 64), new THREE.MeshStandardMaterial({
+        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(30, 64, 64), new THREE.MeshStandardMaterial({
             map: sunTex,
             emissiveMap: sunTex,
             emissive: 0xffaa00,
@@ -423,13 +423,13 @@ class DuarApp {
         this.moonLight.shadow.camera.right = 55;
         this.moonLight.shadow.camera.top = 55;
         this.moonLight.shadow.camera.bottom = -55;
-        this.moonLight.shadow.bias = -0.0002;
+        this.moonLight.shadow.bias = -0.0000;
         this.moonLight.shadow.normalBias = 0;
         this.moonLight.shadow.radius = 3;
         this.scene.add(this.moonLight);
 
         const moonTex = this.generateMoonTexture();
-        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(4, 64, 64), new THREE.MeshStandardMaterial({
+        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(20, 64, 64), new THREE.MeshStandardMaterial({
             map: moonTex,
             emissiveMap: moonTex,
             emissive: 0xffffff,
@@ -651,27 +651,76 @@ class DuarApp {
         if (this.sunMesh && this.moonMesh) {
             this.sunAngle += this.daySpeed * 0.1;
             const r = this.sunDist;
+            const zPlane = -this.sunDist * 0.4;
+
             const y = Math.sin(this.sunAngle) * r;
             const x = Math.cos(this.sunAngle) * r;
 
-            this.sunLight.position.set(x, y, 0);
-            this.sunMesh.position.set(x, y, 0);
-            this.moonLight.position.set(-x, -y, 0);
-            this.moonMesh.position.set(-x, -y, 0);
+            this.sunLight.position.set(x, y, zPlane);
+            this.sunMesh.position.set(x, y, zPlane);
+            this.moonLight.position.set(-x, -y, zPlane);
+            this.moonMesh.position.set(-x, -y, zPlane);
 
-            this.moonMesh.rotation.y = Math.atan2(-x, 0) + Math.PI;
+            this.moonMesh.rotation.y = Math.atan2(-x, zPlane) + Math.PI;
 
             const sH = Math.max(0, Math.sin(this.sunAngle));
-            const mH = Math.max(0, Math.sin(this.sunAngle + Math.PI));
+            const mH = Math.max(0, -Math.sin(this.sunAngle));
 
-            this.sunLight.intensity = sH * 1.5;
-            this.moonLight.intensity = mH * 2.0;
+            // Concurrent cross-fade
+            this.sunLight.intensity = (Math.sin(this.sunAngle) + 0.1 > 0) ? (sH * 5.0) : 0;
+            this.moonLight.intensity = (-Math.sin(this.sunAngle) + 0.1 > 0) ? (mH * 3.5) : 0;
 
-            const currColor = new THREE.Color(0x000000).lerp(new THREE.Color(0x2c3e50), sH);
+            const angleMod = ((this.sunAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+            const transitionZone = Math.PI / 3;
+
+            if (angleMod >= 0 && angleMod <= Math.PI) {
+                const riseEnd = transitionZone;
+                const sunsetStart = Math.PI - transitionZone;
+                if (angleMod < riseEnd) {
+                    const t = 1.0 - (angleMod / riseEnd);
+                    const sunCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xff8833), t);
+                    this.sunMesh.material.color.copy(sunCol);
+                    this.sunLight.color.lerpColors(new THREE.Color(0xffddaa), new THREE.Color(0xff7722), t);
+                } else if (angleMod > sunsetStart) {
+                    const t = (angleMod - sunsetStart) / transitionZone;
+                    const sunCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xff8833), t);
+                    this.sunMesh.material.color.copy(sunCol);
+                    this.sunLight.color.lerpColors(new THREE.Color(0xffddaa), new THREE.Color(0xff7722), t);
+                } else {
+                    this.sunMesh.material.color.set(0xffffff);
+                    this.sunLight.color.set(0xffddaa);
+                }
+            }
+
+            if (angleMod > Math.PI && angleMod < Math.PI * 2) {
+                const riseEnd = Math.PI + transitionZone;
+                const moonSetStart = (Math.PI * 2) - transitionZone;
+                if (angleMod < riseEnd) {
+                    const t = 1.0 - ((angleMod - Math.PI) / transitionZone);
+                    const moonCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xd0e0ff), t);
+                    this.moonMesh.material.color.copy(moonCol);
+                    this.moonMesh.material.emissive.copy(moonCol);
+                } else if (angleMod > moonSetStart) {
+                    const t = (angleMod - moonSetStart) / transitionZone;
+                    const moonCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xd0e0ff), t);
+                    this.moonMesh.material.color.copy(moonCol);
+                    this.moonMesh.material.emissive.copy(moonCol);
+                } else {
+                    this.moonMesh.material.color.set(0xffffff);
+                    this.moonMesh.material.emissive.set(0xffffff);
+                }
+            }
+
+            const dayColor = new THREE.Color(0x2c3e50);
+            const nightColor = new THREE.Color(0x050510);
+            const currColor = new THREE.Color(0x000000);
+            currColor.lerp(dayColor, sH);
+            currColor.lerp(nightColor, mH * 0.4);
+
             this.scene.background = currColor;
             if (this.scene.fog) this.scene.fog.color = currColor;
-
-            this.hemiLight.intensity = 0.1 + (sH * 0.3);
+            this.hemiLight.intensity = 0.15 + (sH * 0.3) + (mH * 0.15);
+            this.hemiLight.color.lerpColors(new THREE.Color(0x4444ff), new THREE.Color(0xffffff), sH);
         }
         if (this.rings) this.rings.forEach(r => r.mesh.rotation.z += r.speed);
         if (this.rock) {
