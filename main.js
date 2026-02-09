@@ -613,7 +613,7 @@ class DuarApp {
             const r = baseR + (i * stepR);
             const mesh = new THREE.Mesh(new THREE.RingGeometry(r - 0.125, r + 0.125, 128), mat);
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.y = 0.15;
+            mesh.position.y = 0.01;
             mesh.receiveShadow = true;
             mesh.renderOrder = 1;
             this.scene.add(mesh); this.rings.push({ mesh, speed: 0 });
