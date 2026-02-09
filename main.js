@@ -741,6 +741,12 @@ class DuarApp {
             this.dust.geometry.attributes.position.needsUpdate = true;
         }
         this.doors.forEach(d => d.group.lookAt(this.camera.position.x, d.group.position.y, this.camera.position.z));
+
+        // Prevent camera from going below the floor (especially on mobile)
+        if (this.camera.position.y < 0.5) {
+            this.camera.position.y = 0.5;
+        }
+
         this.controls.update(); this.composer.render();
     }
 }
