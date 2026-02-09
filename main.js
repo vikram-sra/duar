@@ -106,7 +106,7 @@ class DuarApp {
         const now = new Date();
         const hours = now.getHours() + now.getMinutes() / 60;
         this.sunAngle = ((hours - 6) / 24) * Math.PI * 2;
-        this.daySpeed = 0.05;
+        this.daySpeed = 0.02;
 
         this.animate();
     }
@@ -181,7 +181,7 @@ class DuarApp {
 
         const slider = document.createElement('input');
         slider.type = 'range'; slider.className = 'chrome-slider';
-        slider.min = '0'; slider.max = '0.5'; slider.step = '0.001'; slider.value = '0.05';
+        slider.min = '0'; slider.max = '0.5'; slider.step = '0.001'; slider.value = '0.02';
         slider.oninput = (e) => { this.daySpeed = parseFloat(e.target.value); this.resetUIHideTimer(); };
         ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
 
@@ -354,9 +354,6 @@ class DuarApp {
             duration: 2.0, delay: door.isOpen ? 0.5 : 0, ease: "power2.inOut",
             onComplete: () => { door.isAnimating = false; }
         });
-        if (door.isOpen) {
-            gsap.to(door.light, { intensity: 8, distance: 20, duration: 2.0, delay: 0.5, yoyo: true, repeat: 1 });
-        }
     }
 
     resetScene() {
@@ -550,7 +547,10 @@ class DuarApp {
         for (let r = 0; r < numRings; r++) {
             const currentRadius = baseRadius + (r * radiusStep);
             CONFIG.doors.forEach((data, index) => {
-                const angle = ((index * (Math.PI * 2)) / CONFIG.doors.length) + (r * 0.5);
+                // Alternate rings: even rings (0,2,4) align, odd rings (1,3) offset by half spacing
+                const baseAngle = (index * (Math.PI * 2)) / CONFIG.doors.length;
+                const offset = (r % 2 === 1) ? (Math.PI / CONFIG.doors.length) : 0;
+                const angle = baseAngle + offset;
                 const x = Math.sin(angle) * currentRadius;
                 const z = Math.cos(angle) * currentRadius;
 
@@ -558,14 +558,8 @@ class DuarApp {
                 group.position.set(x, 0, z);
                 this.scene.add(group);
 
-                // Bringing back spotlights
-                const light = new THREE.SpotLight(data.color, 4, 40, 0.5, 0.5, 1);
-                light.position.set(0, 20, 0); light.castShadow = false;
-                group.add(light);
-                const target = new THREE.Object3D(); group.add(target); light.target = target;
-
                 const hinge = new THREE.Group(); hinge.position.set(-0.75, 0, 0); group.add(hinge);
-                const doorObj = { group, data, hinge, light, isOpen: false };
+                const doorObj = { group, data, hinge, isOpen: false };
                 this.createDoorFrame(group, data);
 
                 loader.load(data.modelPath, (gltf) => {
@@ -602,12 +596,26 @@ class DuarApp {
     }
 
     createSacredGeometry() {
-        const mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 1.0, roughness: 0.1, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+        const mat = new THREE.MeshStandardMaterial({
+            color: 0xaaaaaa,
+            metalness: 1.0,
+            roughness: 0.1,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1
+        });
         this.rings = []; const baseR = 15; const stepR = 8;
         for (let i = 0; i < 5; i++) {
             const r = baseR + (i * stepR);
             const mesh = new THREE.Mesh(new THREE.RingGeometry(r - 0.125, r + 0.125, 128), mat);
-            mesh.rotation.x = -Math.PI / 2; mesh.position.y = 0.05; mesh.receiveShadow = true;
+            mesh.rotation.x = -Math.PI / 2;
+            mesh.position.y = 0.15;
+            mesh.receiveShadow = true;
+            mesh.renderOrder = 1;
             this.scene.add(mesh); this.rings.push({ mesh, speed: 0 });
         }
     }
