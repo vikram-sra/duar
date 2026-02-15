@@ -936,3 +936,49 @@ class DuarApp {
     }
 }
 new DuarApp();
+
+// Service Worker Registration for Auto-Update
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then(registration => {
+            console.log('SW registered:', registration);
+
+            // Check for updates every minute (optional but good for long sessions)
+            setInterval(() => {
+                registration.update();
+            }, 60 * 1000);
+
+            registration.onupdatefound = () => {
+                const installingWorker = registration.installing;
+                if (installingWorker == null) {
+                    return;
+                }
+                installingWorker.onstatechange = () => {
+                    if (installingWorker.state === 'installed') {
+                        if (navigator.serviceWorker.controller) {
+                            // New update available
+                            console.log('New content is available; please refresh.');
+                            // Execute update logic
+                            if (registration.waiting) {
+                                registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                            }
+                        } else {
+                            // Content is cached for offline use.
+                            console.log('Content is cached for offline use.');
+                        }
+                    }
+                };
+            };
+        }).catch(registrationError => {
+            console.log('SW registration failed:', registrationError);
+        });
+
+        // Ensure reload when new SW takes control
+        let refreshing;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (refreshing) return;
+            window.location.reload();
+            refreshing = true;
+        });
+    });
+}
