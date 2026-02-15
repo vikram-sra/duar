@@ -12,9 +12,9 @@ const CONFIG = {
         "camera": { "fov": 50, "startPosition": [0, 8, 20] }
     },
     "doors": [
-        { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: "/models/door_rustic.glb", position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "https://portfolio.yoursite.com", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
+        { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: "/models/door_rustic.glb", position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "https://waveism.duar.one", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
         { id: "blog", label: "BLOG", type: "scifi_portal", modelPath: "/models/door_scifi.glb", position: [-5, 0, -9], rotation: [0, 0.2, 0], destinationUrl: "/blog", animation: "slideUp", color: 0x88ccff, particles: "tech" },
-        { id: "projects", label: "PROJECTS", type: "iron_gate", modelPath: "/models/gate_iron.glb", position: [0, 0, -10], rotation: [0, 0, 0], destinationUrl: "/projects", animation: "swingBoth", color: 0xffeeaa, particles: "sparks" },
+        { id: "projects", label: "PROJECTS", type: "iron_gate", modelPath: "/models/gate_iron.glb", position: [0, 0, -10], rotation: [0, 0, 0], destinationUrl: "https://waveism.duar.one", animation: "swingBoth", color: 0xffeeaa, particles: "sparks" },
         { id: "contact", label: "CONTACT", type: "stone_arch", modelPath: "/models/arch_stone.glb", position: [5, 0, -9], rotation: [0, -0.2, 0], destinationUrl: "mailto:you@example.com", animation: "dissolveField", color: 0xcc88ff, particles: "runes" },
         { id: "about", label: "ABOUT", type: "shoji_screen", modelPath: "/models/door_shoji.glb", position: [10, 0, -6], rotation: [0, -0.4, 0], destinationUrl: "/about", animation: "slideRight", color: 0xff88aa, particles: "petals" }
     ],
@@ -26,6 +26,7 @@ const CONFIG = {
 class DuarApp {
     constructor() {
         this.container = document.getElementById('app');
+        console.log("DuarApp initializing...");
         this.scene = new THREE.Scene();
         this.doors = [];
         this.raycaster = new THREE.Raycaster();
@@ -82,6 +83,8 @@ class DuarApp {
         this.controls.minDistance = 0.5;
         this.controls.maxDistance = 100;
         this.controls.maxPolarAngle = Math.PI / 2 - 0.05;
+        this.controls.autoRotate = true; // Default On
+        this.controls.autoRotateSpeed = -0.8; // Gentle default CW
 
         this.scene.fog = new THREE.FogExp2(CONFIG.scene.fog.color, 0.002);
         this.scene.background = new THREE.Color(CONFIG.scene.fog.color);
@@ -157,6 +160,9 @@ class DuarApp {
                     justify-content: center;
                     transition: color 0.1s ease;
                     padding: 0;
+                    user-select: none;
+                    -webkit-user-select: none;
+                    -webkit-touch-callout: none;
                 }
                 .glass-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
                 .glass-btn:hover { color: #fff; }
@@ -189,7 +195,8 @@ class DuarApp {
             home: `<svg viewBox="0 0 24 24"><path d="M12 3L3 12L12 21L21 12L12 3Z"/></svg>`, // Diamond
             random: `<svg viewBox="0 0 24 24"><path d="M4 4h4v4H4zm12 0h4v4h-4zM4 16h4v4H4zm12 0h4v4h-4z"/></svg>`, // Pixel/Grid
             day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 1v1.5M12 21.5V23M1 12h1.5M21.5 12H23"/></svg>`, // Minimalist Sun
-            night: `<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>` // Minimal Crescent
+            night: `<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`, // Minimal Crescent
+            rotate: `<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>` // Loop Icon
         };
 
         const createBtn = (svg, onClick, title = '') => {
@@ -217,10 +224,114 @@ class DuarApp {
             if (!door.isOpen) this.toggleDoor(door);
         }, 'Random Discovery');
 
-        const sunBtn = createBtn(icons.day, () => { this.sunAngle = Math.PI / 2; this.daySpeed = 0; slider.value = 0; }, 'High Noon');
-        const moonBtn = createBtn(icons.night, () => { this.sunAngle = 3 * Math.PI / 2; this.daySpeed = 0; slider.value = 0; }, 'Midnight');
+        const sunBtn = createBtn(icons.day, () => { }, 'High Noon / Hold fwd'); // Click handled by wrapper
+        const moonBtn = createBtn(icons.night, () => { }, 'Midnight / Hold fwd');
+        // Initial color based on default autoRotate = true
+        const rotateBtn = createBtn(icons.rotate, () => { }, 'Toggle Humble / Hold Hyper');
+        rotateBtn.style.color = '#fff';
 
-        wrapper.append(homeBtn, randBtn, sunBtn, slider, moonBtn);
+        // Long Press / Tap Handler
+        const addLongPressHandler = (btn, onInterval, onTap) => {
+            let interval;
+            let time = 0;
+            let isLongPress = false;
+
+            const start = (e) => {
+                // e.preventDefault(); // Removed to allow hover/focus
+                e.stopPropagation();
+                if (interval) clearInterval(interval);
+                this.resetUIHideTimer();
+                time = 0;
+                isLongPress = false;
+
+                interval = setInterval(() => {
+                    time += 50;
+                    this.resetUIHideTimer();
+                    if (time > 200) { // Wait 200ms before treating as hold
+                        isLongPress = true;
+                        onInterval(time);
+                    }
+                }, 50);
+            };
+
+            const end = (e) => {
+                if (interval) {
+                    clearInterval(interval);
+                    interval = null;
+                }
+                if (!isLongPress && onTap && e.type !== 'pointerleave') {
+                    // Don't trigger tap on leave
+                    onTap(); // Pure click
+                    this.resetUIHideTimer();
+                } else if (isLongPress) {
+                    // Generic Release Handler for all buttons
+                    if (btn === rotateBtn && this.controls.autoRotate) {
+                        this.controls.autoRotateSpeed = -0.8; // Gentle CW
+                    }
+                    if ((btn === sunBtn || btn === moonBtn)) {
+                        this.daySpeed = 0.02; // Reset to normal day speed
+                        slider.value = 0.02;
+                    }
+                }
+            };
+
+            btn.addEventListener('pointerdown', start);
+            btn.addEventListener('pointerup', end);
+            btn.addEventListener('pointerleave', end); // Handle slip-off
+            btn.addEventListener('pointerenter', () => this.resetUIHideTimer()); // Keep UI alive on hover
+            // Removed raw touch listeners as pointer events cover them mostly, and duplicates cause issues
+        };
+
+        // Rotate Handler
+        addLongPressHandler(rotateBtn, (t) => {
+            // Hold: Hyper Speed
+            if (!this.controls.autoRotate) {
+                this.controls.autoRotate = true;
+                rotateBtn.style.color = '#fff';
+                this.controls.autoRotateSpeed = -0.5; // Start gentle CW
+            }
+            // Exponential acceleration for "Warp Speed" feel CW
+            // Current speed is negative, so multiply by positive factor to grow magnitude
+            this.controls.autoRotateSpeed = Math.min(-0.5, this.controls.autoRotateSpeed * 1.05);
+
+            if (this.controls.autoRotateSpeed < -5000) this.controls.autoRotateSpeed = -5000; // Theoretical chaos limit
+        }, () => {
+            // Tap: Toggle Gentle
+            this.controls.autoRotate = !this.controls.autoRotate;
+            rotateBtn.style.color = this.controls.autoRotate ? '#fff' : 'rgba(255,255,255,0.3)';
+            if (this.controls.autoRotate) {
+                this.controls.autoRotateSpeed = -0.8; // Gentle Gentle CW
+            }
+        });
+
+        // Sun: Hold to max speed day, Tap for Noon
+        addLongPressHandler(sunBtn, (t) => {
+            if (this.daySpeed < 0.01) this.daySpeed = 0.01;
+            this.daySpeed = Math.min(0.5, this.daySpeed * 1.1); // Accelerate
+            slider.value = this.daySpeed;
+        }, () => {
+            this.sunAngle = Math.PI / 2;
+            this.daySpeed = 0; // Pause at noon
+            slider.value = 0;
+        });
+
+        // Add explicit release handler logic to reset speed after hold
+        // Since addLongPressHandler doesn't expose onRelease, we'll modify it slightly or add listeners manually
+        // actually, let's update addLongPressHandler to accept onRelease callback
+
+
+        // Moon: Hold to max speed night, Tap for Midnight
+        addLongPressHandler(moonBtn, (t) => {
+            if (this.daySpeed < 0.01) this.daySpeed = 0.01;
+            this.daySpeed = Math.min(0.5, this.daySpeed * 1.1); // Accelerate
+            slider.value = this.daySpeed;
+        }, () => {
+            this.sunAngle = 3 * Math.PI / 2;
+            this.daySpeed = 0; // Pause at midnight
+            slider.value = 0;
+        });
+
+        wrapper.append(homeBtn, randBtn, sunBtn, slider, moonBtn, rotateBtn);
         container.appendChild(wrapper);
         document.body.appendChild(container);
 
@@ -292,44 +403,67 @@ class DuarApp {
     }
 
     onClick(event) {
-        this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-        this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-        this.raycaster.setFromCamera(this.mouse, this.camera);
-        const hits = this.raycaster.intersectObjects(this.scene.children, true);
+        try {
+            this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            this.raycaster.setFromCamera(this.mouse, this.camera);
+            const hits = this.raycaster.intersectObjects(this.scene.children, true);
+            console.log("Click hits:", hits.length, hits.map(h => h.object.type));
 
-        let interactedWithObject = false;
+            let interactedWithObject = false;
 
-        if (hits.length > 0) {
-            const hit = hits.find(h => {
-                let obj = h.object;
-                if (obj === this.rock) return true; // Pyramid hit
-                while (obj) {
-                    if (this.doors.some(d => d.group === obj)) return true;
-                    obj = obj.parent;
-                }
-                return false;
-            });
-            if (hit) {
-                interactedWithObject = true;
-                if (hit.object === this.rock) {
-                    this.resetScene();
-                    return;
-                }
-                let obj = hit.object;
-                while (obj) {
-                    const door = this.doors.find(d => d.group === obj);
-                    if (door) {
-                        this.toggleDoor(door);
+            if (hits.length > 0) {
+                // Find if we hit any door-related object
+                const hit = hits.find(h => {
+                    if (h.object === this.rock) return true;
+                    let obj = h.object;
+                    while (obj) {
+                        if (this.doors.some(d => d.group === obj)) return true;
+                        obj = obj.parent;
+                    }
+                    return false;
+                });
+
+                if (hit) {
+                    interactedWithObject = true;
+                    if (hit.object === this.rock) {
+                        this.resetScene();
                         return;
                     }
-                    obj = obj.parent;
+
+                    // Identify the specific door object
+                    let obj = hit.object;
+                    let door = null;
+                    while (obj) {
+                        door = this.doors.find(d => d.group === obj);
+                        if (door) break;
+                        obj = obj.parent;
+                    }
+
+                    if (door) {
+                        // Check if we hit the portal hitbox specifically
+                        // Also check standard openness
+                        console.log("Hit door:", door.data.id, "Open:", door.isOpen, "Object Name:", hit.object.name, "Hitbox Name:", door.portalHitbox?.name);
+
+                        // Strict check on Hitbox object OR name match if references drift
+                        if (hit.object.name === "PortalHitbox" || hit.object === door.portalHitbox) {
+                            console.log("Hit PORTAL HITBOX (Name/Ref Match)");
+                            this.toggleDoor(door);
+                        } else {
+                            // Any other hit (Frame/Panel/Hardware) just toggles
+                            console.log("Hit FRAME/PANEL (Name Match)");
+                            this.toggleDoor(door);
+                        }
+                    }
                 }
             }
-        }
 
-        // Tapping anywhere else toggles UI
-        if (!interactedWithObject) {
-            this.setUIVisibility(!this.uiVisible);
+            // Tapping anywhere else toggles UI
+            if (!interactedWithObject) {
+                this.setUIVisibility(!this.uiVisible);
+            }
+        } catch (e) {
+            console.error("Error in onClick:", e);
         }
     }
 
@@ -348,6 +482,24 @@ class DuarApp {
 
             gsap.to(this.controls.target, { x: targetPoint.x, y: targetPoint.y, z: targetPoint.z, duration: 2.5, ease: "power3.inOut" });
             gsap.to(this.camera.position, { x: targetCamPos.x, y: targetCamPos.y, z: targetCamPos.z, duration: 2.5, ease: "power3.inOut" });
+
+            // Stop auto-rotate on open
+            this.controls.autoRotate = false;
+            // Update button visual state if it exists
+            const rotateBtn = document.querySelector('button[title*="Toggle/Hold Auto-Rotate"]');
+            if (rotateBtn) rotateBtn.style.color = 'rgba(255,255,255,0.3)';
+
+            // Fade out rings on open
+
+            // Fade out rings on open
+            if (this.ringMat) {
+                gsap.to(this.ringMat, { opacity: 0, duration: 1.5, ease: "power2.inOut" });
+            }
+        } else {
+            // Fade rings back in on close (if manually closed without entering)
+            if (this.ringMat) {
+                gsap.to(this.ringMat, { opacity: 0.9, duration: 1.5, ease: "power2.inOut" });
+            }
         }
         gsap.to(door.hinge.rotation, {
             y: door.isOpen ? -Math.PI / 2 : 0,
@@ -356,10 +508,25 @@ class DuarApp {
         });
     }
 
+
+
     resetScene() {
         this.closeAllDoors();
         gsap.to(this.controls.target, { x: 0, y: 1.6, z: 0, duration: 2.0, ease: "power2.inOut" });
         gsap.to(this.camera.position, { x: 0, y: 1.6, z: 25, duration: 2.0, ease: "power2.inOut" });
+
+        // Fade rings back in slowly
+        if (this.ringMat) {
+            gsap.to(this.ringMat, { opacity: 0.9, duration: 4.0, ease: "power2.inOut" });
+        }
+
+        // Reset FOV
+        gsap.to(this.camera, {
+            fov: 50, // Default FOV from CONFIG
+            duration: 2.0,
+            ease: "power2.inOut",
+            onUpdate: () => this.camera.updateProjectionMatrix()
+        });
     }
 
     closeAllDoors() {
@@ -530,7 +697,10 @@ class DuarApp {
         const groundMat = new THREE.MeshStandardMaterial({
             color: 0x2c3e50,
             roughness: 0.9,
-            metalness: 0.1
+            metalness: 0.1,
+            polygonOffset: true,
+            polygonOffsetFactor: 1, // Push back
+            polygonOffsetUnits: 1
         });
         const ground = new THREE.Mesh(groundGeo, groundMat);
         ground.rotation.x = -Math.PI / 2;
@@ -572,6 +742,8 @@ class DuarApp {
                     const monolith = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.6, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.2 }));
                     monolith.position.set(0.75, 1.78, 0); monolith.castShadow = true; monolith.receiveShadow = true; hinge.add(monolith); doorObj.panel = monolith;
                 });
+                doorObj.portalHitbox = group.userData.portalHitbox; // Retrieve from frame creation
+                console.log(`Setup door: ${data.id}, URL: ${data.destinationUrl}, Hitbox:`, doorObj.portalHitbox);
                 this.doors.push(doorObj);
             });
         }
@@ -583,20 +755,33 @@ class DuarApp {
         const postGeo = new THREE.BoxGeometry(0.1, 3.6, 0.1);
 
         // Posts: center at 1.78 means bottom at -0.02 (below ground)
-        const lP = new THREE.Mesh(postGeo, mat); lP.position.set(-0.8, 1.78, 0); lP.castShadow = true; group.add(lP);
-        const rP = new THREE.Mesh(postGeo, mat); rP.position.set(0.8, 1.78, 0); rP.castShadow = true; group.add(rP);
+        const lP = new THREE.Mesh(postGeo, mat); lP.position.set(-0.8, 1.78, 0); lP.castShadow = true; lP.name = "Frame"; group.add(lP);
+        const rP = new THREE.Mesh(postGeo, mat); rP.position.set(0.8, 1.78, 0); rP.castShadow = true; rP.name = "Frame"; group.add(rP);
 
         // Top plate
-        const tP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); tP.position.set(0, 3.58, 0); tP.castShadow = true; group.add(tP);
+        const tP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), mat); tP.position.set(0, 3.58, 0); tP.castShadow = true; tP.name = "Frame"; group.add(tP);
 
         // Base: extend into ground for shadow contact
         const bP = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.12, 0.1), mat);
         bP.position.set(0, 0.04, 0); // Bottom at -0.02
-        bP.castShadow = true; bP.receiveShadow = true; group.add(bP);
+        bP.castShadow = true; bP.receiveShadow = true; bP.name = "Frame"; group.add(bP);
+
+        // Portal Hitbox (Invisible Plane for Entry Click)
+        // Slightly wider (1.5) and forward (z=0.01) to catch clicks better.
+        const portalGeo = new THREE.PlaneGeometry(1.5, 3.5);
+        const portalMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0, visible: true, side: THREE.DoubleSide });
+        const portal = new THREE.Mesh(portalGeo, portalMat);
+        portal.position.set(0, 1.75, 0.01);
+        portal.name = "PortalHitbox";
+        group.add(portal);
+        // Store reference on door object (need to pass back up or find way to access)
+        // Since createDoorFrame returns void, we can retrieve it from children in setupDoors
+        // Actually, easier to return it or attach it to group.userData
+        group.userData.portalHitbox = portal;
     }
 
     createSacredGeometry() {
-        const mat = new THREE.MeshStandardMaterial({
+        this.ringMat = new THREE.MeshStandardMaterial({
             color: 0xaaaaaa,
             metalness: 1.0,
             roughness: 0.1,
@@ -611,9 +796,9 @@ class DuarApp {
         this.rings = []; const baseR = 15; const stepR = 8;
         for (let i = 0; i < 5; i++) {
             const r = baseR + (i * stepR);
-            const mesh = new THREE.Mesh(new THREE.RingGeometry(r - 0.125, r + 0.125, 128), mat);
+            const mesh = new THREE.Mesh(new THREE.RingGeometry(r - 0.125, r + 0.125, 128), this.ringMat);
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.y = 0.01;
+            mesh.position.y = 0.03; // Raised slightly to avoid flickering
             mesh.receiveShadow = true;
             mesh.renderOrder = 1;
             this.scene.add(mesh); this.rings.push({ mesh, speed: 0 });
