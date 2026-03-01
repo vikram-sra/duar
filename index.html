@@ -178,6 +178,62 @@
       }
     }
 
+    /* UIManager Glass Controls CSS */
+    .glass-bar-wrapper {
+        pointer-events: auto;
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        padding: 4px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .chrome-slider {
+        -webkit-appearance: none;
+        width: 140px;
+        height: 2px;
+        background: rgba(255, 255, 255, 0.1);
+        outline: none;
+    }
+    .chrome-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 24px;
+        height: 12px;
+        background: #fff;
+        cursor: pointer;
+        border: none;
+        box-shadow: 0 0 10px rgba(255,255,255,0.3);
+    }
+    .chrome-slider::-webkit-slider-thumb:hover { transform: scale(1.1); }
+    .glass-btn {
+        background: transparent;
+        color: rgba(255,255,255,0.3);
+        border: none;
+        width: 28px;
+        height: 28px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.1s ease;
+        padding: 0;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+    }
+    .glass-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+    .glass-btn:hover { color: #fff; }
+    .glass-btn:active { transform: scale(0.95); }
+    .ui-hidden { opacity: 0; transform: translateY(12px); pointer-events: none; }
+    
+    @media (max-width: 480px) {
+        .chrome-slider { width: 90px; }
+        .glass-bar-wrapper { gap: 6px; padding: 4px 10px; }
+    }
+
     @media (max-width: 768px) {
       h1 {
         font-size: 2.5rem;
