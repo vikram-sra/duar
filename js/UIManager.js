@@ -6,7 +6,7 @@ export class UIManager {
         this.callbacks = callbacks;
         this.uiVisible = true;
         this.uiHideTimeout = null;
-        this.daySpeed = 0.02;
+        this.daySpeed = 0.0;
 
         this.createTimeControls();
         this.resetUIHideTimer();
@@ -23,7 +23,7 @@ export class UIManager {
 
         this.slider = document.createElement('input');
         this.slider.type = 'range'; this.slider.className = 'chrome-slider';
-        this.slider.min = '0'; this.slider.max = '0.5'; this.slider.step = '0.001'; this.slider.value = '0.02';
+        this.slider.min = '0'; this.slider.max = '0.5'; this.slider.step = '0.001'; this.slider.value = '0';
         this.slider.oninput = (e) => {
             this.daySpeed = parseFloat(e.target.value);
             if (this.callbacks.onSpeedChange) this.callbacks.onSpeedChange(this.daySpeed);
@@ -135,7 +135,7 @@ export class UIManager {
                     this.callbacks.onRotateRelease();
                 }
                 if (btn.innerHTML.includes('circle') || btn.innerHTML.includes('9 9 0 1 1')) {
-                    this.setSpeed(0.02);
+                    this.setSpeed(0.0);
                 }
             }
         };

@@ -81,7 +81,7 @@ export class World {
     }
 
     setupDustMotes() {
-        const count = 150; // Increased slightly for better effect
+        const count = 50; // Reduced number of stars
         const geom = new THREE.BufferGeometry();
         const pos = new Float32Array(count * 3);
         // Store original positions for spring-back effect
@@ -104,10 +104,10 @@ export class World {
 
         geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         this.dust = new THREE.Points(geom, new THREE.PointsMaterial({
-            color: 0xffffff,
+            color: 0x444444, // Darker color to prevent bloom (star glow)
             size: 0.1, // Slightly larger
             transparent: true,
-            opacity: 0.4,
+            opacity: 0.3,
             sizeAttenuation: true
         }));
         this.scene.add(this.dust);

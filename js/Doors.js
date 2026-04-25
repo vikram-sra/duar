@@ -34,7 +34,9 @@ export class Doors {
         };
 
         this.hoverLight = new THREE.PointLight(this.currentGlowColor, 0.0, 8, 2.5);
+        this.hoverLight.baseIntensity = 0.0;
         this.openLight = new THREE.PointLight(this.currentGlowColor, 0.0, 8, 2.5);
+        this.openLight.baseIntensity = 0.0;
 
         const edgeThick = 0.04;
         this.sharedGeometries = {
@@ -215,7 +217,7 @@ export class Doors {
             if (door.glowMat) gsap.to(door.glowMat, { emissiveIntensity: 0.4, duration: 1.5 });
             door.group.add(this.openLight);
             this.openLight.position.set(0, 1.75, 0.2);
-            gsap.to(this.openLight, { intensity: 8.0, duration: 1.5 });
+            gsap.to(this.openLight, { baseIntensity: 8.0, duration: 1.5 });
 
             const targetPoint = door.group.position.clone();
             targetPoint.y = 1.75;
@@ -237,7 +239,7 @@ export class Doors {
                 gsap.to(door.glowMat, { emissiveIntensity: targetGlow, duration: 1.5 });
             }
             gsap.to(this.openLight, {
-                intensity: 0.0, duration: 1.5, onComplete: () => {
+                baseIntensity: 0.0, duration: 1.5, onComplete: () => {
                     if (this.openLight.parent) this.openLight.parent.remove(this.openLight);
                 }
             });
@@ -262,7 +264,7 @@ export class Doors {
                     gsap.to(door.glowMat, { emissiveIntensity: targetGlow, duration: 1.5 });
                 }
                 gsap.to(this.openLight, {
-                    intensity: 0.0, duration: 1.5, onComplete: () => {
+                    baseIntensity: 0.0, duration: 1.5, onComplete: () => {
                         if (this.openLight.parent) this.openLight.parent.remove(this.openLight);
                     }
                 });
@@ -296,25 +298,36 @@ export class Doors {
 
         // Evaluate day/night color and sync glow loops
         if (sunAngle !== undefined) {
+            const sunY = Math.sin(sunAngle);
+            const blend = Math.max(0, Math.min(1, (sunY + 1) / 2));
+            const biasedBlend = Math.pow(blend, 1.5);
+            // nightFactor is 0 during the peak of day, and 1 at night. This ensures glow shuts off in daytime.
+            this.nightFactor = Math.pow(1.0 - blend, 1.2);
+
             // Only update colors if sunAngle changed significantly
             if (this.lastSunAngle === undefined || Math.abs(sunAngle - this.lastSunAngle) > 0.01) {
                 this.lastSunAngle = sunAngle;
-
-                const sunY = Math.sin(sunAngle);
-                // Translate sun sin (-1 to 1) into a 0 to 1 blend factor
-                const blend = Math.max(0, Math.min(1, (sunY + 1) / 2));
-
-                // Bias the blend curve slightly so Navy stays prominent longer into twilight
-                const biasedBlend = Math.pow(blend, 1.5);
-
                 this.currentGlowColor.lerpColors(this.nightColor, this.dayColor, biasedBlend);
 
+                // Moderating the day glow by darkening the emissive color during daytime
+                // nightFactor is 1 at night, 0 at peak day.
+                // Using 0.75 as the base ensures it stays lighter than the blue gradient background
+                const brightnessScale = 0.30 + 0.25 * this.nightFactor;
+                const finalGlowColor = new THREE.Color().copy(this.currentGlowColor).multiplyScalar(brightnessScale);
+
                 this.doors.forEach(d => {
-                    if (d.glowMat) d.glowMat.emissive.copy(this.currentGlowColor);
+                    if (d.glowMat) d.glowMat.emissive.copy(finalGlowColor);
                 });
                 if (this.hoverLight) this.hoverLight.color.copy(this.currentGlowColor);
                 if (this.openLight) this.openLight.color.copy(this.currentGlowColor);
             }
+        }
+
+        if (this.openLight && this.openLight.baseIntensity !== undefined) {
+            this.openLight.intensity = this.openLight.baseIntensity * (this.nightFactor !== undefined ? this.nightFactor : 1);
+        }
+        if (this.hoverLight && this.hoverLight.baseIntensity !== undefined) {
+            this.hoverLight.intensity = this.hoverLight.baseIntensity * (this.nightFactor !== undefined ? this.nightFactor : 1);
         }
     }
 
@@ -324,7 +337,7 @@ export class Doors {
         // Dim old door if exists and not open
         if (this.hoveredDoor && !this.hoveredDoor.isOpen) {
             if (this.hoveredDoor.glowMat) gsap.to(this.hoveredDoor.glowMat, { emissiveIntensity: 0.0, duration: 0.3, ease: 'power2.out' });
-            gsap.to(this.hoverLight, { intensity: 0.0, duration: 0.3, ease: 'power2.out' });
+            gsap.to(this.hoverLight, { baseIntensity: 0.0, duration: 0.3, ease: 'power2.out' });
         }
 
         this.hoveredDoor = door;
@@ -335,7 +348,7 @@ export class Doors {
             if (this.hoveredDoor.glowMat) gsap.to(this.hoveredDoor.glowMat, { emissiveIntensity: 0.15, duration: 0.3, ease: 'power2.out' });
             this.hoveredDoor.group.add(this.hoverLight);
             this.hoverLight.position.set(0, 1.75, 0.2);
-            gsap.to(this.hoverLight, { intensity: 2.0, duration: 0.3, ease: 'power2.out' });
+            gsap.to(this.hoverLight, { baseIntensity: 2.0, duration: 0.3, ease: 'power2.out' });
             document.body.style.cursor = 'pointer';
         } else if (this.hoveredDoor && this.hoveredDoor.isOpen) {
             // It's already open and glowing, keep it a pointer

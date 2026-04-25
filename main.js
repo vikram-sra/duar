@@ -95,12 +95,16 @@ class DuarApp {
             onRotateRelease: () => {
                 if (this.world.controls.autoRotate) this.world.controls.autoRotateSpeed = -0.8;
             },
-            onTimeJump: (angle) => this.sunAngle = angle
+            onTimeJump: (angle) => {
+                const now = new Date();
+                const hours = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+                const realSunAngle = ((hours - 6) / 24) * Math.PI * 2;
+                this.timeOffset = angle - realSunAngle;
+            }
         });
 
-        const now = new Date();
-        const hours = now.getHours() + now.getMinutes() / 60;
-        this.sunAngle = ((hours - 6) / 24) * Math.PI * 2;
+        this.timeOffset = 0;
+        this.lastFrameTime = performance.now();
 
         window.addEventListener('pointerdown', (e) => this.onPointerDown(e));
         window.addEventListener('pointermove', (e) => this.onPointerMove(e));
@@ -183,7 +187,17 @@ class DuarApp {
         requestAnimationFrame(() => this.animate());
         this.time += 0.001;
 
-        this.sunAngle += this.ui.daySpeed * 0.1;
+        if (this.ui.daySpeed > 0) {
+            this.timeOffset += this.ui.daySpeed * 0.1;
+        }
+
+        // Always sync with real world time as the base
+        const now = new Date();
+        const hours = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+        const realSunAngle = ((hours - 6) / 24) * Math.PI * 2;
+        
+        this.sunAngle = realSunAngle + this.timeOffset;
+
         this.celestial.update(this.sunAngle);
 
         // Hover Raycast Logic
