@@ -61,9 +61,10 @@
     }
 
     h1 {
-      margin: 0 0 10px 0;
-      font-size: 4.5rem;
-      letter-spacing: 1.2rem;
+      margin: 0 0 6px 0;
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.05rem;
+      letter-spacing: 0.15rem;
       font-weight: 200;
       text-transform: uppercase;
       background: linear-gradient(135deg, #fff 0%, #ffd1a4 50%, #ff9a76 100%);
@@ -87,12 +88,131 @@
     }
 
     .ui-overlay p {
-      font-size: 1.1rem;
-      letter-spacing: 0.3rem;
+      font-size: 1.05rem;
+      letter-spacing: 0.15rem;
       font-weight: 300;
       opacity: 0.9;
-      text-transform: uppercase;
       color: #ffd1a4;
+    }
+
+    #reticle {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0);
+      width: 10px;
+      height: 10px;
+      background: #e32b2b;
+      border-radius: 50%;
+      z-index: 9000;
+      pointer-events: none;
+      cursor: pointer;
+      opacity: 0;
+      transition: none;
+      box-shadow: 0 0 0 2px rgba(227,43,43,0.25), 0 0 12px rgba(227,43,43,0.5);
+    }
+
+    #reticle.visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+      pointer-events: auto;
+    }
+
+    #reticle:hover {
+      box-shadow: 0 0 0 3px rgba(255,80,80,0.4), 0 0 20px rgba(255,80,80,0.7);
+      background: #ff3333;
+    }
+
+    /* Pulsing ring around the travel dot */
+    .reticle-ring {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 44px;
+      height: 44px;
+      margin: -22px 0 0 -22px;
+      border: 1.5px solid rgba(227, 43, 43, 0.55);
+      border-radius: 50%;
+      pointer-events: none;
+      animation: reticlePulse 1.8s ease-out infinite;
+    }
+
+    @keyframes reticlePulse {
+      0% { transform: scale(0.6); opacity: 0.9; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    /* Entered door's name, above the dot */
+    .reticle-title {
+      position: absolute;
+      bottom: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #fff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.3rem;
+      text-indent: 0.3rem;
+      white-space: nowrap;
+      pointer-events: none;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85), 0 0 14px rgba(227, 43, 43, 0.5);
+      opacity: 0.95;
+    }
+
+    /* "ENTER" cue under the dot */
+    .reticle-label {
+      position: absolute;
+      top: 52px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #fff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.35rem;
+      text-indent: 0.35rem;
+      white-space: nowrap;
+      pointer-events: none;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8), 0 0 12px rgba(227, 43, 43, 0.6);
+      opacity: 0.9;
+    }
+
+    /* "Go Back" exit under the Enter dot — closes the door and returns home */
+    .reticle-back {
+      position: absolute;
+      top: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255, 255, 255, 0.55);
+      font-family: 'Outfit', sans-serif;
+      font-size: 10px;
+      font-weight: 400;
+      letter-spacing: 0.3rem;
+      text-indent: 0.3rem;
+      white-space: nowrap;
+      cursor: pointer;
+      pointer-events: none;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+      transition: color 0.2s ease;
+    }
+
+    #reticle.visible .reticle-back {
+      pointer-events: auto;
+    }
+
+    .reticle-back:hover {
+      color: #fff;
+    }
+
+    /* Subtle cinematic vignette */
+    .vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 20;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.45) 100%);
+      mix-blend-mode: multiply;
     }
 
     .door-label {
@@ -110,7 +230,7 @@
       border: 1.5px solid rgba(255, 255, 255, 0.2);
       white-space: nowrap;
       opacity: 0;
-      transition: all 0.5s cubic-bezier(0.165, 0.84, 0.44, 1);
+      transition: opacity 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
       box-shadow:
         0 15px 35px rgba(0, 0, 0, 0.3),
         0 5px 15px rgba(0, 0, 0, 0.2),
@@ -121,12 +241,12 @@
 
     .instructions {
       position: absolute;
-      bottom: calc(40px + env(safe-area-inset-bottom));
+      bottom: calc(96px + env(safe-area-inset-bottom));
       left: 50%;
       transform: translateX(-50%);
-      color: rgba(255, 255, 255, 0.7);
-      font-size: 0.9rem;
-      letter-spacing: 0.15rem;
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 0.6rem;
+      letter-spacing: 0.12rem;
       text-align: center;
       pointer-events: none;
       z-index: 10;
@@ -136,12 +256,74 @@
 
     .instructions span {
       display: inline-block;
-      padding: 8px 16px;
-      background: rgba(0, 0, 0, 0.4);
-      border-radius: 4px;
-      margin: 0 5px;
-      backdrop-filter: blur(10px);
+      padding: 4px 10px;
+      background: rgba(20, 20, 24, 0.28);
+      border-radius: 8px;
+      margin: 0 3px;
+      backdrop-filter: blur(12px) saturate(160%);
+      -webkit-backdrop-filter: blur(12px) saturate(160%);
       border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* Top-right live clock (Gurmukhi numerals) */
+    #clock {
+      position: fixed;
+      top: calc(20px + env(safe-area-inset-top));
+      right: calc(20px + env(safe-area-inset-right));
+      z-index: 15;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 3px;
+      pointer-events: none;
+      opacity: 0;
+      animation: fadeInSlide 2s cubic-bezier(0.165, 0.84, 0.44, 1) forwards 0.6s;
+    }
+
+    #clock-time {
+      display: inline-block;
+      box-sizing: border-box;
+      width: 160px;          /* fixed — glyph widths vary as digits change, box must not */
+      white-space: nowrap;   /* never wrap to a 2nd line (that changes box height) */
+      overflow: hidden;      /* hard guarantee: box can never grow past width/height */
+      text-align: center;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 300;
+      letter-spacing: 0.02rem;
+      color: rgba(255, 255, 255, 0.9);
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: rgba(20, 20, 24, 0.28);
+      backdrop-filter: blur(12px) saturate(160%);
+      -webkit-backdrop-filter: blur(12px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+      font-variant-numeric: tabular-nums;
+      pointer-events: auto; /* hover/tap reveals the timezone label below */
+      cursor: default;
+    }
+
+    /* Hidden by default — revealed on hover/tap of the time, auto-hides after 5s (see main.js) */
+    #clock-tz {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.55rem;
+      font-weight: 300;
+      letter-spacing: 0.1rem;
+      color: rgba(255, 255, 255, 0.4);
+      text-transform: uppercase;
+      padding-right: 4px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    #clock.tz-visible #clock-tz {
+      opacity: 1;
+    }
+
+    @media (max-width: 480px) {
+      #clock-time { width: 138px; font-size: 0.65rem; padding: 4px 6px; }
     }
 
     .loading {
@@ -179,11 +361,6 @@
     }
 
     @media (max-width: 768px) {
-      h1 {
-        font-size: 2.5rem;
-        letter-spacing: 0.5rem;
-      }
-
       .ui-overlay {
         top: calc(20px + env(safe-area-inset-top));
         left: calc(20px + env(safe-area-inset-left));
@@ -206,6 +383,38 @@
     <div class="minimal-loader"></div>
   </div>
   <div id="app"></div>
+
+  <!-- Cinematic vignette framing -->
+  <div class="vignette"></div>
+
+  <!-- Live clock (Gurmukhi numerals, local timezone) -->
+  <div id="clock">
+    <span id="clock-time"></span>
+    <span id="clock-tz"></span>
+  </div>
+
+  <!-- Title wordmark (fades in on load, dismissed on first interaction) -->
+  <div class="ui-overlay" id="intro-title">
+    <h1>Duar</h1>
+    <p>ਦੁਆਰ</p>
+  </div>
+
+  <!-- First-visit guidance (fades in on load, dismissed on first interaction) -->
+  <div class="instructions" id="intro-hint">
+    <span>Tap a portal to open</span>
+    <span>Drag to look around</span>
+    <span>Tap anywhere to show controls</span>
+  </div>
+
+  <!-- Center reticle: appears on door open -->
+  <div id="reticle">
+    <span class="reticle-title"></span>
+    <span class="reticle-ring"></span>
+    <span class="reticle-label">Enter</span>
+    <span class="reticle-back">Go Back</span>
+  </div>
+
+
   <script type="module" src="/main.js"></script>
   <script>
     // Reveal will be controlled by DuarApp in main.js using LoadingManager
