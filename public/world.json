@@ -1,0 +1,86 @@
+{
+  "world": {
+    "slug": "duar",
+    "title": "Duar",
+    "tagline": "ਦੁਆਰ",
+    "settings": {
+      "doorsPerRing": 5,
+      "baseRadius": 15,
+      "radiusStep": 8
+    }
+  },
+  "doors": [
+    {
+      "slug": "waveism",
+      "title": "duar-੧",
+      "kind": "link",
+      "destination_url": "https://waveism.duar.one",
+      "color": "#ffaa88",
+      "is_published": true
+    },
+    {
+      "slug": "two",
+      "title": "duar-੨",
+      "kind": "page",
+      "page_slug": "two",
+      "color": "#88ccff",
+      "is_published": true
+    },
+    {
+      "slug": "three",
+      "title": "duar-੩",
+      "kind": "page",
+      "page_slug": "three",
+      "color": "#ffeeaa",
+      "is_published": true
+    },
+    {
+      "slug": "four",
+      "title": "duar-੪",
+      "kind": "page",
+      "page_slug": "four",
+      "color": "#cc88ff",
+      "is_published": true
+    },
+    {
+      "slug": "five",
+      "title": "duar-੫",
+      "kind": "page",
+      "page_slug": "five",
+      "color": "#ff88aa",
+      "is_published": true
+    },
+    {
+      "slug": "six",
+      "title": "duar-੬",
+      "kind": "page",
+      "page_slug": "six",
+      "color": "#88ffcc",
+      "is_published": true
+    },
+    {
+      "slug": "seven",
+      "title": "duar-੭",
+      "kind": "page",
+      "page_slug": "seven",
+      "color": "#ffc488",
+      "is_published": true
+    },
+    {
+      "slug": "eight",
+      "title": "duar-੮",
+      "kind": "page",
+      "page_slug": "eight",
+      "color": "#a8b0ff",
+      "is_published": true
+    },
+    {
+      "slug": "nine",
+      "title": "duar-੯",
+      "kind": "page",
+      "page_slug": "nine",
+      "color": "#d0d0d0",
+      "is_published": true
+    }
+  ]
+}

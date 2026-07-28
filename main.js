@@ -6,22 +6,17 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
 import gsap from 'gsap';
 
+// Scene-level defaults. Door CONTENT lives in /world.json (see loadWorld) so it can be
+// edited without a code change — and, later, served from the database instead.
 const CONFIG = {
     "scene": {
         "fog": { "color": "#2c3e50", "near": 20, "far": 90 },
         "camera": { "fov": 50, "startPosition": [0, 8, 20] }
-    },
-    "doors": [
-        { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: "/models/door_rustic.glb", position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "https://waveism.duar.one", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
-        { id: "blog", label: "BLOG", type: "scifi_portal", modelPath: "/models/door_scifi.glb", position: [-5, 0, -9], rotation: [0, 0.2, 0], destinationUrl: "/blog", animation: "slideUp", color: 0x88ccff, particles: "tech" },
-        { id: "projects", label: "PROJECTS", type: "iron_gate", modelPath: "/models/gate_iron.glb", position: [0, 0, -10], rotation: [0, 0, 0], destinationUrl: "https://waveism.duar.one", animation: "swingBoth", color: 0xffeeaa, particles: "sparks" },
-        { id: "contact", label: "CONTACT", type: "stone_arch", modelPath: "/models/arch_stone.glb", position: [5, 0, -9], rotation: [0, -0.2, 0], destinationUrl: "mailto:you@example.com", animation: "dissolveField", color: 0xcc88ff, particles: "runes" },
-        { id: "about", label: "ABOUT", type: "shoji_screen", modelPath: "/models/door_shoji.glb", position: [10, 0, -6], rotation: [0, -0.4, 0], destinationUrl: "/about", animation: "slideRight", color: 0xff88aa, particles: "petals" }
-    ],
-    "paths": [
-        { id: "main_path", texture: "/textures/stone_path_diffuse.png", points: [] }
-    ]
+    }
 };
+
+// Fallback layout if world.json omits settings.
+const DEFAULT_LAYOUT = { doorsPerRing: 5, baseRadius: 15, radiusStep: 8 };
 
 class DuarApp {
     constructor() {
@@ -52,11 +47,16 @@ class DuarApp {
     _bindReticle() {
         const reticle = document.getElementById('reticle');
         if (!reticle) return;
-        // Enter dot: intentionally inert for now — swallow the event so the click neither
-        // travels nor bubbles to the door/canvas behind it.
-        ['pointerdown', 'pointerup', 'click'].forEach(ev =>
+        // Swallow pointer events so a click on the reticle never reaches the door/canvas behind it.
+        ['pointerdown', 'pointerup'].forEach(ev =>
             reticle.addEventListener(ev, (e) => e.stopPropagation())
         );
+        // Enter dot: travel through the open portal. ("Go Back" is a child of #reticle but
+        // calls stopPropagation, so its clicks never reach this handler.)
+        reticle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.activeDoor && !this.isTraveling) this.travelThroughPortal(this.activeDoor);
+        });
         // "Go Back": close the open door and fly home.
         const backBtn = reticle.querySelector('.reticle-back');
         if (backBtn) {
@@ -65,6 +65,64 @@ class DuarApp {
                 if (!this.isTraveling) this.resetScene();
             });
         }
+    }
+
+    // ---- Routing: /d/<slug> addresses a single door, so worlds are shareable ----
+
+    _slugFromPath(path = window.location.pathname) {
+        const m = path.match(/^\/d\/([^/]+)\/?$/);
+        return m ? decodeURIComponent(m[1]) : null;
+    }
+
+    // Reflect the open door in the URL. Suppressed while responding to popstate,
+    // so browser navigation doesn't push new entries back onto the stack.
+    _setUrlForDoor(door) {
+        if (this._suppressUrlUpdate) return;
+        const path = door && door.slug ? `/d/${encodeURIComponent(door.slug)}` : '/';
+        if (window.location.pathname === path) return;
+        window.history.pushState({ slug: (door && door.slug) || null }, '', path);
+    }
+
+    // Called once the doors exist: honour a deep link, then track back/forward.
+    onDoorsReady() {
+        const slug = this._slugFromPath();
+        if (slug) {
+            const door = this.doors.find(d => d.slug === slug);
+            if (door) {
+                this.dismissIntro();
+                this._suppressUrlUpdate = true; // already at this URL
+                this.toggleDoor(door);
+                this._suppressUrlUpdate = false;
+            } else {
+                // Unknown slug — show the overview rather than sit on a dead URL.
+                window.history.replaceState({}, '', '/');
+            }
+        }
+        window.addEventListener('popstate', () => this._syncToUrl());
+    }
+
+    _syncToUrl() {
+        const slug = this._slugFromPath();
+        const target = slug ? this.doors.find(d => d.slug === slug) : null;
+        const open = this.doors.find(d => d.isOpen);
+        if (target === open) return; // already in the right state
+
+        this._suppressUrlUpdate = true;
+        if (open && open !== target) this.toggleDoor(open); // close the current one
+        if (target && !target.isOpen) this.toggleDoor(target);
+        this._suppressUrlUpdate = false;
+    }
+
+    // Briefly swap the "Enter" caption for a status message, then restore it.
+    _flashReticleLabel(message) {
+        const label = document.querySelector('#reticle .reticle-label');
+        if (!label) return;
+        if (!this._reticleLabelDefault) this._reticleLabelDefault = label.textContent;
+        label.textContent = message;
+        clearTimeout(this._reticleLabelTimeout);
+        this._reticleLabelTimeout = setTimeout(() => {
+            label.textContent = this._reticleLabelDefault;
+        }, 1600);
     }
 
     _showReticle() {
@@ -617,19 +675,22 @@ class DuarApp {
 
     travelThroughPortal(door) {
         if (this.isTraveling) return;
+
+        const kind = door.data.kind || 'link';
+        const destinationUrl = door.data.destination_url;
+
+        // Duar-hosted pages land in Phase 4. Until then, don't play a fade-to-black
+        // transition into a dead end — say so and stay in the world.
+        if (kind !== 'link' || !destinationUrl) {
+            this._flashReticleLabel(kind === 'page' ? 'Coming soon' : 'No destination');
+            return;
+        }
+
         this.isTraveling = true;
 
         // Hide reticle immediately
         this.activeDoor = null;
         this._hideReticle();
-
-        const destinationUrl = door.data.destinationUrl;
-        console.log("travelThroughPortal to:", destinationUrl);
-
-        if (!destinationUrl) {
-            this.isTraveling = false;
-            return;
-        }
 
         // Stop OrbitControls interaction
         this.controls.enabled = false;
@@ -866,6 +927,7 @@ class DuarApp {
 
             // Arm travel now; the reticle is revealed on arrival (see onArrive below).
             this.activeDoor = door;
+            this._setUrlForDoor(door); // deep-linkable: /d/<slug>
 
             // Genuine fly-to: interpolate the camera THROUGH space to the door, then
             // hand off to a gentle orbit around the now-open portal and show the reticle.
@@ -888,6 +950,7 @@ class DuarApp {
         } else {
             // Clear active door and hide reticle
             this.activeDoor = null;
+            this._setUrlForDoor(null); // back to the world overview URL
             this._hideReticle();
             this.setUIVisibility(true); // bring the dock back now that the door is closing
 
@@ -957,6 +1020,7 @@ class DuarApp {
 
         // Hide reticle
         this.activeDoor = null;
+        this._setUrlForDoor(null); // back to the world overview URL
         this.daySpeed = 0.02;    // back to ambient day/night speed
         this._hideReticle();
         this.setUIVisibility(true); // bring the dock back (door closing / returning home)
@@ -1195,11 +1259,6 @@ class DuarApp {
         return String(str).replace(/[0-9]/g, c => d[+c]);
     }
 
-    // Temporary door name: "duar-" + a random 1–9 rendered as a Gurmukhi numeral.
-    _randomDoorName() {
-        return 'duar-' + this._toGurmukhi(1 + Math.floor(Math.random() * 9)); // 1–9
-    }
-
     // Top-right live clock in Gurmukhi numerals (HH : MM : SS : mmm), auto-detected local timezone.
     _startClock() {
         const clockEl = document.getElementById('clock');
@@ -1232,51 +1291,89 @@ class DuarApp {
         this._clockInterval = setInterval(tick, 40); // decoupled from the rAF ticker so ms stays smooth
     }
 
-    setupDoors() {
+    // Load door content. Today this is a static file; in Phase 1 it becomes a database
+    // query returning the same shape, so nothing below here has to change.
+    async loadWorld() {
+        try {
+            const res = await fetch('/world.json', { cache: 'no-cache' });
+            if (!res.ok) throw new Error(`world.json ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            console.error('Failed to load world:', e);
+            return { world: {}, doors: [] };
+        }
+    }
+
+    // Place door `index` on a ring, filling inner rings first so the world grows
+    // outward as doors are added. Doors may pin themselves with explicit ring/slot.
+    layoutDoor(index, data, layout) {
+        const { doorsPerRing, baseRadius, radiusStep } = layout;
+        const ring = Number.isInteger(data.ring) ? data.ring : Math.floor(index / doorsPerRing);
+        const slot = Number.isInteger(data.slot) ? data.slot : index % doorsPerRing;
+        const radius = baseRadius + (ring * radiusStep);
+        // Odd rings sit half a slot around, so doors don't line up radially.
+        const offset = (ring % 2 === 1) ? (Math.PI / doorsPerRing) : 0;
+        const angle = ((slot * Math.PI * 2) / doorsPerRing) + offset;
+        return { x: Math.sin(angle) * radius, z: Math.cos(angle) * radius, ring, slot };
+    }
+
+    async setupDoors() {
+        const { world, doors } = await this.loadWorld();
+        this.world = world || {};
+        const layout = { ...DEFAULT_LAYOUT, ...(world?.settings || {}) };
+        const visible = (doors || []).filter(d => d.is_published !== false);
+
         const loader = new GLTFLoader(this.loadingManager);
-        const numRings = 5; const baseRadius = 15; const radiusStep = 8;
-        for (let r = 0; r < numRings; r++) {
-            const currentRadius = baseRadius + (r * radiusStep);
-            CONFIG.doors.forEach((data, index) => {
-                // Alternate rings: even rings (0,2,4) align, odd rings (1,3) offset by half spacing
-                const baseAngle = (index * (Math.PI * 2)) / CONFIG.doors.length;
-                const offset = (r % 2 === 1) ? (Math.PI / CONFIG.doors.length) : 0;
-                const angle = baseAngle + offset;
-                const x = Math.sin(angle) * currentRadius;
-                const z = Math.cos(angle) * currentRadius;
 
-                const group = new THREE.Group();
-                group.position.set(x, 0, z);
-                this.scene.add(group);
+        visible.forEach((data, index) => {
+            const { x, z, ring, slot } = this.layoutDoor(index, data, layout);
 
-                const hinge = new THREE.Group(); hinge.position.set(-0.75, 0, 0); group.add(hinge);
-                const doorObj = { group, data, hinge, isOpen: false };
-                this.createDoorFrame(group, data);
+            const group = new THREE.Group();
+            group.position.set(x, 0, z);
+            this.scene.add(group);
 
-                loader.load(data.modelPath, (gltf) => {
+            const hinge = new THREE.Group(); hinge.position.set(-0.75, 0, 0); group.add(hinge);
+            const doorObj = { group, data, hinge, isOpen: false, ring, slot };
+            this.createDoorFrame(group, data);
+
+            const addMonolith = () => {
+                // Monolith: height 3.6 (extended), center at 1.78 means bottom at -0.02
+                const monolith = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.6, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.2 }));
+                monolith.position.set(0.75, 1.78, 0); monolith.castShadow = true; monolith.receiveShadow = true; hinge.add(monolith); doorObj.panel = monolith;
+            };
+
+            // Only hit the network when a model is actually specified — otherwise every
+            // door used to fire a guaranteed 404 before falling back to the monolith.
+            if (data.model_path) {
+                loader.load(data.model_path, (gltf) => {
                     const model = gltf.scene; const panel = model.getObjectByName('Door') || model;
                     model.traverse(o => { if (o.isMesh) { o.material = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.4, metalness: 0.2 }); o.castShadow = true; o.receiveShadow = true; } });
                     // Sink panel slightly into ground for shadow contact
                     panel.position.set(0.75, -0.02, 0); hinge.add(panel); doorObj.panel = panel;
-                }, null, () => {
-                    // Monolith: height 3.6 (extended), center at 1.78 means bottom at -0.02
-                    const monolith = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.6, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.2 }));
-                    monolith.position.set(0.75, 1.78, 0); monolith.castShadow = true; monolith.receiveShadow = true; hinge.add(monolith); doorObj.panel = monolith;
-                });
-                doorObj.portalHitbox = group.userData.portalHitbox; // Retrieve from frame creation
-                doorObj.portalMaterial = group.userData.portalMaterial; // Vortex shader material
+                }, null, addMonolith);
+            } else {
+                addMonolith();
+            }
 
-                // Floating name label (shown on hover / when open — see updateLabels()).
-                const labelEl = document.createElement('div');
-                labelEl.className = 'door-label';
-                doorObj.name = this._randomDoorName();
-                labelEl.textContent = doorObj.name;
-                document.body.appendChild(labelEl);
-                doorObj.labelEl = labelEl;
+            doorObj.portalHitbox = group.userData.portalHitbox; // Retrieve from frame creation
+            doorObj.portalMaterial = group.userData.portalMaterial; // Vortex shader material
 
-                this.doors.push(doorObj);
-            });
-        }
+            // Stable identity, straight from the data — a door keeps its name across
+            // reloads and is addressable by slug (see the router).
+            doorObj.slug = data.slug;
+            doorObj.name = data.title || `duar-${this._toGurmukhi(index + 1)}`;
+
+            // Floating name label (shown on hover / when open — see updateLabels()).
+            const labelEl = document.createElement('div');
+            labelEl.className = 'door-label';
+            labelEl.textContent = doorObj.name;
+            document.body.appendChild(labelEl);
+            doorObj.labelEl = labelEl;
+
+            this.doors.push(doorObj);
+        });
+
+        this.onDoorsReady();
     }
 
     createDoorFrame(group, data) {
