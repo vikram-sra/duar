@@ -156,7 +156,33 @@ class DuarApp {
         clearTimeout(this._reticleLabelTimeout);
         this._reticleLabelTimeout = setTimeout(() => {
             label.textContent = this._reticleLabelDefault;
+            label.classList.remove('refuse');
         }, 1600);
+    }
+
+    // A door with nothing behind it shouldn't play a three-second crossing into an
+    // empty plane. Shake the reticle instead — a refusal you feel rather than read.
+    _refuseEntry(message = 'Coming soon') {
+        const reticle = document.getElementById('reticle');
+        const label = reticle?.querySelector('.reticle-label');
+        this._flashReticleLabel(message);
+        if (!reticle || !label) return;
+
+        // Restart the animation even on repeated taps: drop the class, force a reflow,
+        // then re-add. Without the reflow the browser coalesces it and nothing moves.
+        reticle.classList.remove('refuse');
+        label.classList.remove('refuse');
+        void reticle.offsetWidth;
+        reticle.classList.add('refuse');
+        label.classList.add('refuse');
+        setTimeout(() => reticle.classList.remove('refuse'), 500);
+    }
+
+    // Has this door got anywhere to take you? Either an outbound link, or media to
+    // arrive on. Without one the crossing has no destination.
+    _doorHasDestination(door) {
+        const d = door.data || {};
+        return Boolean(d.destination_url || d.media_url || d.preview_url);
     }
 
     _showReticle() {
@@ -456,6 +482,13 @@ class DuarApp {
     // vanishing point). One uProgress uniform drives every visual effect.
     async travelThroughPortal(door) {
         if (this.isTraveling) return;
+
+        // Nothing behind this door yet — refuse, and stay in the world.
+        if (!this._doorHasDestination(door)) {
+            this._refuseEntry('Coming soon');
+            return;
+        }
+
         this.isTraveling = true;
 
         this.activeDoor = null;

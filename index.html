@@ -178,6 +178,36 @@
       opacity: 0.9;
     }
 
+    /* "Coming soon" refusal: a short head-shake for a door with nothing behind it.
+       Keyframes must carry the -50% centring, or the label jumps left as it starts. */
+    @keyframes reticleRefuse {
+      0%, 100% { transform: translateX(-50%); }
+      15%      { transform: translateX(calc(-50% - 6px)); }
+      30%      { transform: translateX(calc(-50% + 6px)); }
+      45%      { transform: translateX(calc(-50% - 4px)); }
+      60%      { transform: translateX(calc(-50% + 4px)); }
+      80%      { transform: translateX(calc(-50% - 2px)); }
+    }
+
+    .reticle-label.refuse {
+      animation: reticleRefuse 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+      color: #ff8a80;
+      letter-spacing: 0.2rem;
+      text-indent: 0.2rem;
+    }
+
+    /* The dot flinches with the label so the refusal reads as one gesture. */
+    @keyframes dotRefuse {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(227,43,43,0.25), 0 0 12px rgba(227,43,43,0.5); }
+      50%      { box-shadow: 0 0 0 5px rgba(227,43,43,0.42), 0 0 22px rgba(227,43,43,0.8); }
+    }
+
+    #reticle.refuse { animation: dotRefuse 0.5s ease; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .reticle-label.refuse, #reticle.refuse { animation: none; }
+    }
+
     /* "Go Back" exit under the Enter dot — closes the door and returns home */
     .reticle-back {
       position: absolute;
