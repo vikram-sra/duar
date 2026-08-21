@@ -205,6 +205,80 @@
       color: #fff;
     }
 
+    /* Arrival panel: appears only once the camera has settled, so the WebGL→DOM
+       handover happens in the one moment nothing is moving. */
+    #arrival {
+      position: fixed;
+      left: 50%;
+      /* Clears the control dock, which sits at 45px + its own height. */
+      bottom: calc(130px + env(safe-area-inset-bottom));
+      transform: translate(-50%, 16px);
+      z-index: 40;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 20px 28px;
+      max-width: min(90vw, 30rem);
+      text-align: center;
+      border-radius: 12px;
+      background: rgba(16, 18, 24, 0.42);
+      backdrop-filter: blur(16px) saturate(160%);
+      -webkit-backdrop-filter: blur(16px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .5s ease, transform .5s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    #arrival.visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+      pointer-events: auto;
+    }
+
+    .arrival-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 1rem;
+      font-weight: 500;
+      letter-spacing: 0.18rem;
+      color: #fff;
+      text-transform: uppercase;
+    }
+
+    .arrival-body {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 300;
+      line-height: 1.55;
+      color: rgba(255, 255, 255, 0.72);
+    }
+
+    .arrival-link {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 0.16rem;
+      text-transform: uppercase;
+      color: #ffd1a4;
+      text-decoration: none;
+      padding: 9px 20px;
+      border: 1px solid rgba(255, 209, 164, 0.35);
+      border-radius: 7px;
+      transition: background .25s ease, border-color .25s ease;
+    }
+
+    .arrival-link:hover,
+    .arrival-link:focus-visible {
+      background: rgba(255, 209, 164, 0.12);
+      border-color: rgba(255, 209, 164, 0.7);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #arrival { transition: opacity .2s ease; }
+    }
+
     /* Subtle cinematic vignette */
     .vignette {
       position: fixed;
@@ -407,6 +481,13 @@
   </div>
 
   <!-- Center reticle: appears on door open -->
+  <!-- Arrival panel: revealed after the crossing settles -->
+  <div id="arrival">
+    <span class="arrival-title"></span>
+    <span class="arrival-body"></span>
+    <a class="arrival-link" hidden></a>
+  </div>
+
   <div id="reticle">
     <span class="reticle-title"></span>
     <span class="reticle-ring"></span>

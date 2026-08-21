@@ -13,6 +13,8 @@ import {
     createGround, createSacredGeometry, createCentralRock, createSkyDome, createDustMotes
 } from './src/scene/environment.js';
 import { createDoorFrame, createMonolithPanel } from './src/doors/doorFrame.js';
+import { createCrossingPass, apertureForDoor } from './src/doors/crossingPass.js';
+import { preloadDoorMedia, buildArrivalPlane, disposeArrival } from './src/doors/arrival.js';
 import { createDock } from './src/ui/dock.js';
 import { startClock } from './src/ui/clock.js';
 
@@ -24,6 +26,31 @@ const CONFIG = {
         "camera": { "fov": 50, "startPosition": [0, 8, 20] }
     }
 };
+
+// How far beyond the doorway the arriving content sits, and where the camera comes to
+// rest. The gap between them frames the content: ~3.5m at 55° fits a 3.2m-tall plane
+// with margin. The camera must stop SHORT of the content, or it flies through it.
+const ARRIVAL_DISTANCE = 4.5;
+const CAMERA_REST_DISTANCE = 1.0;
+
+const SHADOW_MAP_SIZE = 2048;
+// Re-render shadows only once the sun has swung this far. At ambient speed a full day
+// takes ~12 min, so this is a handful of shadow passes per day instead of 60/second.
+const SHADOW_REFRESH_RADIANS = 0.004;
+
+// Scratch objects reused every frame. Allocating THREE.Color/Vector3 inside animate()
+// produced ~720 objects/second, and the resulting GC pauses read as random micro-stutter.
+const _tmpColor = new THREE.Color();
+const _tmpColorB = new THREE.Color();
+const _tmpVec = new THREE.Vector3();
+const C_WHITE = new THREE.Color(0xffffff);
+const C_SUN_WARM = new THREE.Color(0xff8833);
+const C_SUN_LIGHT = new THREE.Color(0xffddaa);
+const C_SUN_LOW = new THREE.Color(0xff7722);
+const C_MOON_COOL = new THREE.Color(0xd0e0ff);
+const C_DAY_SKY = new THREE.Color(0x2c3e50);
+const C_NIGHT_SKY = new THREE.Color(0x050510);
+const C_HEMI_NIGHT = new THREE.Color(0x4444ff);
 
 class DuarApp {
     constructor() {
@@ -229,6 +256,12 @@ class DuarApp {
         this.bloomPass = new UnrealBloomPass(bloomRes, 1.2, 0.4, 0.2); // Increased strength, lower threshold for glow
         this.composer.addPass(this.bloomPass);
 
+        // The whole crossing — mask blur, streaks, aberration, vignette — in one pass
+        // driven by one uniform. Disabled at rest so it costs nothing when idle.
+        this.crossingPass = createCrossingPass();
+        this.composer.addPass(this.crossingPass);
+        this._crossProgress = 0;
+
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.target.set(0, 1.6, 0);
         this.controls.enableDamping = true;
@@ -417,119 +450,179 @@ class DuarApp {
         }
     }
 
-    travelThroughPortal(door) {
+    // Cross the threshold. Content ARRIVES in the world rather than replacing it:
+    // phase ੧ approach (blur ramps, media decode starts), ੨ commit (hold, wait for the
+    // doorway to fill the viewport), ੩ warp (accelerate, content grows from the
+    // vanishing point). One uProgress uniform drives every visual effect.
+    async travelThroughPortal(door) {
         if (this.isTraveling) return;
-
-        const kind = door.data.kind || 'link';
-        const destinationUrl = door.data.destination_url;
-
-        // Duar-hosted pages land in Phase 4. Until then, don't play a fade-to-black
-        // transition into a dead end — say so and stay in the world.
-        if (kind !== 'link' || !destinationUrl) {
-            this._flashReticleLabel(kind === 'page' ? 'Coming soon' : 'No destination');
-            return;
-        }
-
         this.isTraveling = true;
 
-        // Hide reticle immediately
         this.activeDoor = null;
         this._hideReticle();
 
-        // Stop OrbitControls interaction
+        // Take sole authority over the camera. The door-open orbit leaves _orbitRadius
+        // set, and the render loop re-projects the camera onto that sphere every frame —
+        // which drags it back out through the doorway while the crossing tween pulls it
+        // in. Releasing it here is what lets the camera actually come to rest facing the
+        // arriving content instead of away from it.
+        this._orbitRadius = null;
         this.controls.enabled = false;
         this.controls.autoRotate = false;
+        this.controls.enableDamping = false;
+        gsap.killTweensOf(this.camera.position);
+        gsap.killTweensOf(this.controls.target);
+        if (this.uiContainer) this.setUIVisibility(false);
 
-        // Hide UI
-        if (this.uiContainer) {
-            this.setUIVisibility(false);
-            this.uiContainer.style.display = 'none';
-        }
+        // Someone who asked for less motion gets the destination, not the ride.
+        const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-        // Get portal world position and direction
         const portalWorldPos = new THREE.Vector3();
         door.portalHitbox.getWorldPosition(portalWorldPos);
-
         const dir = new THREE.Vector3().subVectors(portalWorldPos, this.camera.position).normalize();
-        const targetCamPos = portalWorldPos.clone().add(dir.multiplyScalar(3.0));
 
-        const tl = gsap.timeline();
+        // ── Phase ੧ — approach. Start the decode NOW so the texture is resident long
+        // before the warp; uploading mid-warp drops frames at the worst possible moment.
+        const mediaPromise = preloadDoorMedia(door);
 
-        // 1. Zoom camera through the portal center
-        tl.to(this.camera.position, {
-            x: targetCamPos.x,
-            y: portalWorldPos.y,
-            z: targetCamPos.z,
-            duration: 1.8,
-            ease: "power3.in"
-        }, 0);
+        this.crossingPass.enabled = true;
+        this.crossingPass.uniforms.uTint.value.set(door.data.color || '#ffffff');
+        this._crossingDoor = door;
+        this._crossProgress = 0;
 
-        // Keep looking straight forward
-        tl.to(this.controls.target, {
-            x: portalWorldPos.x + dir.x * 10.0,
-            y: portalWorldPos.y,
-            z: portalWorldPos.z + dir.z * 10.0,
-            duration: 1.5,
-            ease: "power2.inOut"
-        }, 0);
+        const media = await mediaPromise;
+        if (!this.isTraveling) return; // backed out while loading
 
-        // 2. Extreme FOV stretch for speed effect
-        tl.to(this.camera, {
-            fov: 130,
-            duration: 1.8,
-            ease: "power3.in",
-            onUpdate: () => this.camera.updateProjectionMatrix()
-        }, 0);
+        // Content sits well beyond the doorway, facing back along the approach — far
+        // enough ahead that the camera comes to rest in front of it rather than through it.
+        const arrival = buildArrivalPlane(media);
+        arrival.position.copy(portalWorldPos).addScaledVector(dir, ARRIVAL_DISTANCE);
+        arrival.lookAt(this.camera.position);
+        arrival.scale.setScalar(0.35);
+        this.scene.add(arrival);
+        this._arrivalMesh = arrival;
+        if (media.kind === 'video') media.video.play().catch(() => {});
 
-        // 3. Keep transition dark and elegant (no bright bloom spike)
-        const legend = document.getElementById('controls-legend');
-        if (legend) {
-            tl.to(legend, {
-                opacity: 0,
-                y: -10,
-                duration: 0.5,
-                ease: 'power2.out'
-            }, 0);
+        if (reduced) {
+            gsap.to(arrival.material, { opacity: 1, duration: 0.2 });
+            arrival.scale.setScalar(1);
+            this._settleAfterCrossing(door, media);
+            return;
         }
 
-        // 4. Create fade overlay
-        const overlay = document.createElement('div');
-        overlay.style.cssText = `
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: #000;
-            opacity: 0;
-            z-index: 99999;
-            pointer-events: none;
-        `;
-        document.body.appendChild(overlay);
+        const tl = gsap.timeline({ onComplete: () => this._settleAfterCrossing(door, media) });
 
-        tl.to(overlay, {
-            opacity: 1,
-            duration: 1.0,
-            ease: "power2.inOut"
-        }, 0.8);
+        // uProgress drives blur → streaks → aberration → tint, all from this one tween.
+        tl.to(this, { _crossProgress: 1, duration: 2.6, ease: 'power2.in' }, 0);
 
-        // 5. Complete travel & redirect
-        tl.call(() => {
-            if (destinationUrl.startsWith('mailto:')) {
-                window.location.href = destinationUrl;
-                setTimeout(() => {
-                    overlay.style.opacity = '0';
-                    setTimeout(() => {
-                        document.body.removeChild(overlay);
-                        this.isTraveling = false;
-                        this.controls.enabled = true;
-                        if (this.uiContainer) {
-                            this.uiContainer.style.display = 'flex';
-                            this.setUIVisibility(true);
-                        }
-                        this.resetScene();
-                    }, 500);
-                }, 2000);
+        // ੧+੨: measured dolly toward the doorway. Restraint here is what makes ੩ land.
+        tl.to(this.camera.position, {
+            x: portalWorldPos.x, y: portalWorldPos.y, z: portalWorldPos.z,
+            duration: 1.5, ease: 'power1.inOut'
+        }, 0);
+        tl.to(this.controls.target, {
+            x: portalWorldPos.x + dir.x * 10, y: portalWorldPos.y, z: portalWorldPos.z + dir.z * 10,
+            duration: 1.2, ease: 'power2.inOut'
+        }, 0);
+
+        // ੩: warp. Only once the frame edges have left the viewport — with no reference
+        // geometry left, the eye can't measure speed, which is when to add it. The camera
+        // comes to rest short of the content, not past it.
+        tl.to(this.camera.position, {
+            x: portalWorldPos.x + dir.x * CAMERA_REST_DISTANCE,
+            y: portalWorldPos.y,
+            z: portalWorldPos.z + dir.z * CAMERA_REST_DISTANCE,
+            duration: 1.1, ease: 'power3.in'
+        }, 1.5);
+        // FOV spikes for the speed distortion, then relaxes so the arriving content is
+        // framed by a normal lens rather than a fisheye.
+        tl.to(this.camera, {
+            fov: 118, duration: 0.8, ease: 'power3.in',
+            onUpdate: () => this.camera.updateProjectionMatrix()
+        }, 1.5);
+        tl.to(this.camera, {
+            fov: 55, duration: 0.9, ease: 'power2.out',
+            onUpdate: () => this.camera.updateProjectionMatrix()
+        }, 2.3);
+
+        // Content grows OUT of the vanishing point rather than cutting in.
+        tl.to(arrival.scale, { x: 1, y: 1, z: 1, duration: 1.3, ease: 'power2.out' }, 1.3);
+        tl.to(arrival.material, { opacity: 1, duration: 0.9, ease: 'power2.out' }, 1.4);
+
+        // Bloom belongs to the portals, not to what arrives. A photo or video filling
+        // the frame would otherwise blow out into a white blob. Restored in _endCrossing.
+        tl.to(this.bloomPass, { strength: 0.25, duration: 1.0, ease: 'power2.out' }, 1.4);
+    }
+
+    // The camera is still now — the one moment a WebGL→DOM handover is invisible.
+    _settleAfterCrossing(door, media) {
+        this.showArrivalPanel(door, media);
+        // Bring the dock back so Home is reachable; the reticle's "Go Back" is hidden
+        // during a crossing, so without this there'd be no way out.
+        this.setUIVisibility(true);
+    }
+
+    // Nothing that moves is DOM; nothing interactive is WebGL. A live third-party page
+    // can't be a texture, so those doors offer the link onward from here.
+    showArrivalPanel(door, media) {
+        const panel = document.getElementById('arrival');
+        if (!panel) return;
+        const title = panel.querySelector('.arrival-title');
+        const body = panel.querySelector('.arrival-body');
+        const link = panel.querySelector('.arrival-link');
+
+        if (title) title.textContent = door.name || '';
+        if (body) body.textContent = door.data.summary || '';
+
+        const url = door.data.destination_url;
+        if (link) {
+            if (url) {
+                link.href = url;
+                link.textContent = door.data.link_label || 'Open';
+                link.hidden = false;
+                link.rel = 'noopener noreferrer';
+                link.target = '_blank';
             } else {
-                window.location.href = destinationUrl;
+                link.hidden = true;
             }
+        }
+        panel.classList.add('visible');
+    }
+
+    hideArrivalPanel() {
+        document.getElementById('arrival')?.classList.remove('visible');
+    }
+
+    // Unwind a crossing: drop the arrival surface, disable the pass (so it stops
+    // costing anything), and restore the camera. Safe to call when not crossing.
+    _endCrossing() {
+        this.hideArrivalPanel();
+
+        if (this._arrivalMesh) {
+            const media = this._crossingDoor?._media;
+            if (media?.kind === 'video') media.video.pause();
+            disposeArrival(this._arrivalMesh);
+            this._arrivalMesh = null;
+        }
+
+        if (this.crossingPass) {
+            gsap.killTweensOf(this);
+            this._crossProgress = 0;
+            this.crossingPass.uniforms.uProgress.value = 0;
+            this.crossingPass.enabled = false;
+        }
+
+        this._crossingDoor = null;
+        this.isTraveling = false;
+        this.controls.enabled = true;
+        this.controls.enableDamping = true;
+
+        // Restore the world's portal bloom, dimmed while content was on screen.
+        if (this.bloomPass) gsap.to(this.bloomPass, { strength: 1.2, duration: 1.0, ease: 'power2.inOut' });
+
+        gsap.to(this.camera, {
+            fov: 50, duration: 1.2, ease: 'power2.out',
+            onUpdate: () => this.camera.updateProjectionMatrix()
         });
     }
 
@@ -700,6 +793,7 @@ class DuarApp {
 
     resetScene() {
         this.closeAllDoors();
+        this._endCrossing();
 
         // Hide reticle
         this.activeDoor = null;
@@ -743,7 +837,36 @@ class DuarApp {
         });
     }
 
+    // three re-renders every shadow-casting light every frame while autoUpdate is on;
+    // with two directional lights that was the largest single cost in the frame. But the
+    // shadow casters here are not static: doors billboard toward the camera every frame
+    // and swing when opening, so the maps must be invalidated on camera movement too —
+    // not just on the sun. The win lands when the scene actually settles (auto-rotate
+    // off, nothing animating), which is exactly when someone is reading a door.
+    _updateShadowMaps() {
+        const sunMoved = this._lastShadowAngle === undefined
+            || Math.abs(this.sunAngle - this._lastShadowAngle) >= SHADOW_REFRESH_RADIANS;
+
+        // Billboarding is driven by camera position, so any camera movement changes
+        // every door's silhouette.
+        const camMoved = this._lastShadowCamPos === undefined
+            || this.camera.position.distanceToSquared(this._lastShadowCamPos) > 1e-4;
+
+        const doorMoving = this.doors.some(d => d.isAnimating);
+
+        if (sunMoved || camMoved || doorMoving) {
+            this.renderer.shadowMap.needsUpdate = true;
+            this._lastShadowAngle = this.sunAngle;
+            if (!this._lastShadowCamPos) this._lastShadowCamPos = new THREE.Vector3();
+            this._lastShadowCamPos.copy(this.camera.position);
+        }
+    }
+
     setupLighting() {
+        // Render shadow maps on demand only (see _updateShadowMaps).
+        this.renderer.shadowMap.autoUpdate = false;
+        this.renderer.shadowMap.needsUpdate = true;
+
         const ambient = new THREE.AmbientLight(0xffffff, 0.1);
         this.scene.add(ambient);
         this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222244, 0.3);
@@ -752,8 +875,11 @@ class DuarApp {
         this.sunDist = 600;
         this.sunLight = new THREE.DirectionalLight(0xffddaa, 1.5);
         this.sunLight.castShadow = true;
-        this.sunLight.shadow.mapSize.width = 8192;
-        this.sunLight.shadow.mapSize.height = 8192;
+        // 2048² costs ~17MB per map; 8192² costs ~268MB and showed no visible gain at
+        // these distances. See _updateShadowMaps() — these are re-rendered on demand,
+        // not every frame, because the sun barely moves at ambient day speed.
+        this.sunLight.shadow.mapSize.width = SHADOW_MAP_SIZE;
+        this.sunLight.shadow.mapSize.height = SHADOW_MAP_SIZE;
         this.sunLight.shadow.camera.near = 0.5;
         this.sunLight.shadow.camera.far = 1000;
         const d = 55;
@@ -778,8 +904,8 @@ class DuarApp {
 
         this.moonLight = new THREE.DirectionalLight(0xaaccff, 2.0);
         this.moonLight.castShadow = true;
-        this.moonLight.shadow.mapSize.width = 8192;
-        this.moonLight.shadow.mapSize.height = 8192;
+        this.moonLight.shadow.mapSize.width = SHADOW_MAP_SIZE;
+        this.moonLight.shadow.mapSize.height = SHADOW_MAP_SIZE;
         this.moonLight.shadow.camera.near = 0.5;
         this.moonLight.shadow.camera.far = 1000;
         this.moonLight.shadow.camera.left = -55;
@@ -941,14 +1067,12 @@ class DuarApp {
                 const sunsetStart = Math.PI - transitionZone;
                 if (angleMod < riseEnd) {
                     const t = 1.0 - (angleMod / riseEnd);
-                    const sunCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xff8833), t);
-                    this.sunMesh.material.color.copy(sunCol);
-                    this.sunLight.color.lerpColors(new THREE.Color(0xffddaa), new THREE.Color(0xff7722), t);
+                    this.sunMesh.material.color.copy(C_WHITE).lerp(C_SUN_WARM, t);
+                    this.sunLight.color.lerpColors(C_SUN_LIGHT, C_SUN_LOW, t);
                 } else if (angleMod > sunsetStart) {
                     const t = (angleMod - sunsetStart) / transitionZone;
-                    const sunCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xff8833), t);
-                    this.sunMesh.material.color.copy(sunCol);
-                    this.sunLight.color.lerpColors(new THREE.Color(0xffddaa), new THREE.Color(0xff7722), t);
+                    this.sunMesh.material.color.copy(C_WHITE).lerp(C_SUN_WARM, t);
+                    this.sunLight.color.lerpColors(C_SUN_LIGHT, C_SUN_LOW, t);
                 } else {
                     this.sunMesh.material.color.set(0xffffff);
                     this.sunLight.color.set(0xffddaa);
@@ -960,30 +1084,31 @@ class DuarApp {
                 const moonSetStart = (Math.PI * 2) - transitionZone;
                 if (angleMod < riseEnd) {
                     const t = 1.0 - ((angleMod - Math.PI) / transitionZone);
-                    const moonCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xd0e0ff), t);
-                    this.moonMesh.material.color.copy(moonCol);
-                    this.moonMesh.material.emissive.copy(moonCol);
+                    _tmpColor.copy(C_WHITE).lerp(C_MOON_COOL, t);
+                    this.moonMesh.material.color.copy(_tmpColor);
+                    this.moonMesh.material.emissive.copy(_tmpColor);
                 } else if (angleMod > moonSetStart) {
                     const t = (angleMod - moonSetStart) / transitionZone;
-                    const moonCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xd0e0ff), t);
-                    this.moonMesh.material.color.copy(moonCol);
-                    this.moonMesh.material.emissive.copy(moonCol);
+                    _tmpColor.copy(C_WHITE).lerp(C_MOON_COOL, t);
+                    this.moonMesh.material.color.copy(_tmpColor);
+                    this.moonMesh.material.emissive.copy(_tmpColor);
                 } else {
                     this.moonMesh.material.color.set(0xffffff);
                     this.moonMesh.material.emissive.set(0xffffff);
                 }
             }
 
-            const dayColor = new THREE.Color(0x2c3e50);
-            const nightColor = new THREE.Color(0x050510);
-            const currColor = new THREE.Color(0x000000);
-            currColor.lerp(dayColor, sH);
-            currColor.lerp(nightColor, mH * 0.4);
+            const currColor = _tmpColorB.setRGB(0, 0, 0);
+            currColor.lerp(C_DAY_SKY, sH);
+            currColor.lerp(C_NIGHT_SKY, mH * 0.4);
 
-            this.scene.background = currColor;
-            if (this.scene.fog) this.scene.fog.color = currColor;
+            // scene.background / fog.color hold their own Color instances — copy into
+            // them rather than reassigning, so the scratch object is never captured.
+            if (this.scene.background && this.scene.background.isColor) this.scene.background.copy(currColor);
+            else this.scene.background = currColor.clone();
+            if (this.scene.fog) this.scene.fog.color.copy(currColor);
             this.hemiLight.intensity = 0.15 + (sH * 0.3) + (mH * 0.15);
-            this.hemiLight.color.lerpColors(new THREE.Color(0x4444ff), new THREE.Color(0xffffff), sH);
+            this.hemiLight.color.lerpColors(C_HEMI_NIGHT, C_WHITE, sH);
 
             // Subtle horizon afterglow: fades in with the moon, invisible during the day.
             if (this.skyDome) {
@@ -1037,10 +1162,20 @@ class DuarApp {
 
         // Enforce orbit radius if set — keeps camera at target distance while autoRotate runs freely
         if (this._orbitRadius !== null) {
-            const dir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
-            this.camera.position.copy(this.controls.target).addScaledVector(dir, this._orbitRadius);
+            _tmpVec.subVectors(this.camera.position, this.controls.target).normalize();
+            this.camera.position.copy(this.controls.target).addScaledVector(_tmpVec, this._orbitRadius);
         }
 
+        // Feed the crossing pass: one uniform for progress, plus the doorway's live
+        // projected rect so the mask tracks the real silhouette as it skews.
+        if (this.crossingPass && this.crossingPass.enabled) {
+            const u = this.crossingPass.uniforms;
+            u.uProgress.value = this._crossProgress;
+            u.uAspect.value = window.innerWidth / window.innerHeight;
+            if (this._crossingDoor) apertureForDoor(this._crossingDoor, this.camera, u.uAperture.value);
+        }
+
+        this._updateShadowMaps();
         this.composer.render();
     }
 }

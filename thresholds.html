@@ -1,0 +1,536 @@
+<title>Duar Thresholds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&family=Outfit:wght@200;300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+Gurmukhi:wght@400;600&display=swap">
+
+<style>
+  :root {
+    --ground:      #EDF0F5;
+    --surface:     #F7F9FC;
+    --surface-alt: #E3E8F0;
+    --ink:         #10151F;
+    --ink-soft:    #444E61;
+    --ink-faint:   #6B7689;
+    --rule:        #C9D2E0;
+    --rule-soft:   #DCE3ED;
+    --amber:       #A85F1E;
+    --amber-glow:  #E8A366;
+    --dusk:        #3A4D6B;
+    --dusk-soft:   #6E86AB;
+    --alarm:       #A8322C;
+    --alarm-bg:    #F6E4E2;
+    --ok:          #2F6146;
+    --ok-bg:       #E0EDE5;
+    --shadow:      0 1px 2px rgba(16,21,31,.05), 0 8px 24px rgba(16,21,31,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0A0D13;
+      --surface:     #11151E;
+      --surface-alt: #1A2130;
+      --ink:         #E4E9F2;
+      --ink-soft:    #A7B2C4;
+      --ink-faint:   #757F93;
+      --rule:        #262E3D;
+      --rule-soft:   #1C2432;
+      --amber:       #E8A366;
+      --amber-glow:  #F0BC8B;
+      --dusk:        #7B94BC;
+      --dusk-soft:   #4A5F82;
+      --alarm:       #E8756C;
+      --alarm-bg:    #2A1614;
+      --ok:          #7FC49C;
+      --ok-bg:       #12241A;
+      --shadow:      0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:      #0A0D13;
+    --surface:     #11151E;
+    --surface-alt: #1A2130;
+    --ink:         #E4E9F2;
+    --ink-soft:    #A7B2C4;
+    --ink-faint:   #757F93;
+    --rule:        #262E3D;
+    --rule-soft:   #1C2432;
+    --amber:       #E8A366;
+    --amber-glow:  #F0BC8B;
+    --dusk:        #7B94BC;
+    --dusk-soft:   #4A5F82;
+    --alarm:       #E8756C;
+    --alarm-bg:    #2A1614;
+    --ok:          #7FC49C;
+    --ok-bg:       #12241A;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Outfit', system-ui, sans-serif;
+    font-weight: 300;
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 24px 120px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; }
+
+  .mast { padding: 88px 0 40px; border-bottom: 1px solid var(--rule); margin-bottom: 48px; }
+  .eyebrow {
+    font-size: 11px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 500; margin: 0 0 22px;
+  }
+  h1 {
+    font-family: 'Newsreader', Georgia, serif; font-weight: 300;
+    font-size: clamp(2.9rem, 8vw, 4.6rem); line-height: 1.02;
+    letter-spacing: -.02em; margin: 0; text-wrap: balance;
+  }
+  h1 .gur { font-family: 'Noto Serif Gurmukhi', 'Newsreader', serif; color: var(--amber); font-weight: 400; }
+  .thesis {
+    font-family: 'Newsreader', Georgia, serif; font-size: clamp(1.15rem, 2.6vw, 1.4rem);
+    font-weight: 300; line-height: 1.5; color: var(--ink-soft);
+    max-width: 34rem; margin: 20px 0 0; text-wrap: balance;
+  }
+
+  h2 {
+    font-family: 'Newsreader', Georgia, serif; font-weight: 400; font-size: 1.9rem;
+    line-height: 1.2; letter-spacing: -.012em; margin: 70px 0 6px; text-wrap: balance;
+  }
+  h2 + .sub { color: var(--ink-faint); font-size: 15px; margin: 0 0 28px; }
+  h3 { font-family: 'Outfit', sans-serif; font-weight: 500; font-size: 1.02rem; margin: 32px 0 8px; }
+  p { margin: 0 0 17px; }
+  a { color: var(--amber); text-underline-offset: 2px; }
+  strong { font-weight: 500; color: var(--ink); }
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .85em;
+    background: var(--surface-alt); padding: .12em .38em; border-radius: 3px;
+  }
+  ul.plain { padding-left: 18px; }
+  ul.plain li { margin-bottom: 9px; color: var(--ink-soft); }
+
+  .finding {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-left: 2px solid var(--alarm); border-radius: 4px;
+    padding: 22px 26px; margin: 0 0 18px; box-shadow: var(--shadow);
+  }
+  .finding .tag {
+    display: inline-block; font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+    font-weight: 600; color: var(--alarm); background: var(--alarm-bg);
+    padding: 3px 8px; border-radius: 3px; margin-bottom: 11px;
+  }
+  .finding h3 { margin: 0 0 8px; font-size: 1.08rem; }
+  .finding p:last-child { margin-bottom: 0; }
+
+  .fork { display: grid; gap: 14px; margin: 22px 0 8px; }
+  @media (min-width: 660px) { .fork { grid-template-columns: 1fr 1fr; } }
+  .opt { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 19px 21px; }
+  .opt.pick { border-color: var(--ok); background: var(--ok-bg); }
+  .opt h4 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+  .opt .verdict {
+    font-size: 10px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600;
+    color: var(--ink-faint); display: block; margin-bottom: 10px;
+  }
+  .opt.pick .verdict { color: var(--ok); }
+  .opt ul { margin: 0; padding-left: 17px; font-size: 14.5px; color: var(--ink-soft); }
+  .opt li { margin-bottom: 5px; }
+
+  .phase {
+    display: grid; grid-template-columns: auto 1fr; gap: 20px;
+    padding: 22px 0; border-top: 1px solid var(--rule-soft);
+  }
+  .phase:last-of-type { border-bottom: 1px solid var(--rule-soft); }
+  .num {
+    font-family: 'Noto Serif Gurmukhi', serif; font-size: 1.8rem; line-height: 1;
+    color: var(--amber); font-weight: 400; width: 1.3em; text-align: center;
+  }
+  .phase h3 { margin: 0 0 5px; }
+  .phase p { margin: 0 0 10px; font-size: 15.5px; color: var(--ink-soft); }
+  .phase p:last-child { margin-bottom: 0; }
+  .trigger {
+    font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--dusk);
+    background: var(--surface-alt); border-radius: 3px; padding: 7px 11px; display: inline-block;
+  }
+
+  figure { margin: 30px 0; }
+  figure svg { display: block; width: 100%; height: auto; overflow: visible; }
+  figcaption {
+    font-size: 13px; color: var(--ink-faint); margin-top: 14px;
+    padding-left: 14px; border-left: 2px solid var(--rule);
+  }
+  .scroll-x { overflow-x: auto; }
+
+  pre {
+    font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.75;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+    padding: 20px 22px; overflow-x: auto; margin: 20px 0; color: var(--ink-soft);
+  }
+  pre .k { color: var(--amber); }
+  pre .c { color: var(--ink-faint); font-style: italic; }
+
+  /* ─ Budget table: magnitudes encoded as bars, not just numbers ─ */
+  .budget { margin: 24px 0; border-top: 1px solid var(--rule); }
+  .brow {
+    display: grid; grid-template-columns: 1fr auto; gap: 4px 16px;
+    padding: 15px 0; border-bottom: 1px solid var(--rule-soft); align-items: baseline;
+  }
+  .brow .what { font-size: 15px; font-weight: 400; }
+  .brow .figure-n {
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    font-variant-numeric: tabular-nums; color: var(--ink-soft); white-space: nowrap;
+  }
+  .brow .bar { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--surface-alt); overflow: hidden; }
+  .brow .bar i { display: block; height: 100%; border-radius: 3px; }
+  .brow .note { grid-column: 1 / -1; font-size: 13.5px; color: var(--ink-faint); }
+  .bar i.hot { background: var(--alarm); }
+  .bar i.cool { background: var(--ok); }
+
+  .decide { border-top: 1px solid var(--rule-soft); padding: 19px 0; }
+  .decide:last-child { border-bottom: 1px solid var(--rule-soft); }
+  .decide .q { font-weight: 500; margin: 0 0 6px; }
+  .decide .why { font-size: 14.5px; color: var(--ink-faint); margin: 0; }
+
+  .rule-note {
+    border-left: 2px solid var(--amber); padding: 3px 0 3px 18px;
+    margin: 22px 0; color: var(--ink-soft); font-size: 15.5px;
+  }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <p class="eyebrow">Design study · Duar · v2</p>
+    <h1>Thresholds <span class="gur">ਦੁਆਰ</span></h1>
+    <p class="thesis">A door is not a link. It is a unit of progress you pass through — and the world should rearrange itself as you do.</p>
+  </header>
+
+  <p>Two ideas are tangled together here, and they carry different risk. <strong>The crossing</strong> — entering one door — is craft, and most of the machinery already exists. <strong>The structure</strong> — doors as units of a plan, geometry that responds to progress — is a product direction, and it changes what Duar is.</p>
+
+  <p>This version goes deeper on the three things that decide whether it feels expensive or cheap: <strong>speed</strong>, <strong>the visual language of the crossing</strong>, and <strong>seamlessness</strong>. Those aren't polish applied at the end. Each one constrains the architecture, so they're designed first.</p>
+
+  <h2>Two findings</h2>
+  <p class="sub">Both change the design; the first changes the product</p>
+
+  <div class="finding">
+    <span class="tag">Hard constraint</span>
+    <h3>A live website cannot be drawn inside the door</h3>
+    <p>Content could be "a photo, a website, a video, literally anything." Photos and video are easy — <code>VideoTexture</code> is native. But there is <strong>no browser API that rasterises a live iframe into a WebGL texture</strong>. Not cross-origin, not even same-origin. It's a security boundary in the browser, not a library gap.</p>
+    <p>So "any website" is the single item on that list that can't behave like the others.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag">Spec correction</span>
+    <h3>What you described isn't depth of field</h3>
+    <p>"Only the inside of the door stays in focus." True depth-of-field focuses on a <em>distance</em> — every other door on the same ring would stay just as sharp. You're describing a <strong>mask</strong> on the door's aperture: sharp inside, blurred everywhere else regardless of depth. Cheaper than bokeh, and exactly the look you asked for.</p>
+  </div>
+
+  <h2>The crossing</h2>
+  <p class="sub">Three phases, one continuous camera move</p>
+
+  <p>You gave two triggers — door fills the width on desktop, "two to three seconds" on a phone. Those are the same event. A portrait phone reaches full width much sooner, which is why it reads as time. One rule covers both.</p>
+
+  <div class="phase">
+    <div class="num">੧</div>
+    <div>
+      <h3>Approach</h3>
+      <p>Steady dolly along the door-to-camera line as the panel swings. The aperture mask ramps in — a few pixels at the edges — so the world softens without announcing itself. <strong>Content preloading starts here</strong>, which is what makes phase ੩ possible without a stutter.</p>
+      <p class="trigger">blur = progress × 0.35 · begin texture decode</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">੨</div>
+    <div>
+      <h3>Commit</h3>
+      <p>Motion stays linear and calm; the portal rim glow comes up. The doorway is now the only sharp thing on screen. This beat has to feel <em>deliberate</em> — restraint here is what makes the next phase read as acceleration rather than noise.</p>
+      <p class="trigger">until doorScreenWidth ÷ viewportWidth ≥ 1.0</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">੩</div>
+    <div>
+      <h3>Warp</h3>
+      <p>The frame edges leave the viewport, so there's no reference geometry left. The moment the eye can no longer measure speed is exactly when to add it. FOV stretches, the dolly goes exponential, chromatic aberration splits the edges, and the content scales up <em>from</em> the vanishing point rather than cutting in.</p>
+      <p class="trigger">ease power3.in · fov 50° → 130° · 900 ms floor</p>
+    </div>
+  </div>
+
+  <figure>
+    <div class="scroll-x">
+      <svg viewBox="0 0 700 190" role="img" aria-label="Three frames: door approaching with slight blur, door filling the frame, then warp with content arriving">
+        <defs>
+          <filter id="b1"><feGaussianBlur stdDeviation="0.6"/></filter>
+          <filter id="b2"><feGaussianBlur stdDeviation="2.4"/></filter>
+        </defs>
+        <g transform="translate(0,20)">
+          <rect x="0" y="0" width="200" height="120" rx="3" fill="var(--surface)" stroke="var(--rule)"/>
+          <g filter="url(#b1)" opacity=".55">
+            <rect x="14" y="62" width="18" height="42" fill="var(--dusk-soft)"/>
+            <rect x="168" y="66" width="16" height="38" fill="var(--dusk-soft)"/>
+            <line x1="0" y1="104" x2="200" y2="104" stroke="var(--dusk-soft)" stroke-width="1"/>
+          </g>
+          <rect x="82" y="40" width="36" height="66" fill="none" stroke="var(--amber)" stroke-width="1.5"/>
+          <text x="100" y="160" text-anchor="middle" font-family="Outfit,sans-serif" font-size="11" fill="var(--ink-faint)">੧ · approach</text>
+        </g>
+        <g transform="translate(250,20)">
+          <rect x="0" y="0" width="200" height="120" rx="3" fill="var(--surface)" stroke="var(--rule)"/>
+          <g filter="url(#b2)" opacity=".45">
+            <rect x="2" y="54" width="26" height="52" fill="var(--dusk-soft)"/>
+            <rect x="176" y="58" width="22" height="48" fill="var(--dusk-soft)"/>
+            <line x1="0" y1="106" x2="200" y2="106" stroke="var(--dusk-soft)" stroke-width="2"/>
+          </g>
+          <rect x="46" y="10" width="108" height="104" fill="none" stroke="var(--amber)" stroke-width="1.5"/>
+          <rect x="52" y="16" width="96" height="92" fill="var(--amber)" opacity=".07"/>
+          <text x="100" y="160" text-anchor="middle" font-family="Outfit,sans-serif" font-size="11" fill="var(--ink-faint)">੨ · commit</text>
+        </g>
+        <g transform="translate(500,20)">
+          <rect x="0" y="0" width="200" height="120" rx="3" fill="var(--surface)" stroke="var(--rule)"/>
+          <rect x="0" y="0" width="200" height="120" rx="3" fill="var(--amber)" opacity=".1"/>
+          <g stroke="var(--amber)" stroke-width="1" opacity=".5">
+            <line x1="100" y1="60" x2="18" y2="8"/><line x1="100" y1="60" x2="182" y2="8"/>
+            <line x1="100" y1="60" x2="18" y2="112"/><line x1="100" y1="60" x2="182" y2="112"/>
+          </g>
+          <rect x="66" y="40" width="68" height="40" rx="2" fill="var(--surface-alt)" stroke="var(--amber)" stroke-width="1.5"/>
+          <text x="100" y="160" text-anchor="middle" font-family="Outfit,sans-serif" font-size="11" fill="var(--ink-faint)">੩ · warp + arrival</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>The frame leaves the viewport <em>before</em> acceleration begins. Losing the reference geometry is what sells the speed — add it while the posts are still visible and it reads as a glitch.</figcaption>
+  </figure>
+
+  <h2>One pass, one number</h2>
+  <p class="sub">The visual centrepiece — and the reason it stays cheap</p>
+
+  <p>The obvious build is four effects: mask blur, radial streaks, chromatic aberration, vignette. Four passes, four sets of timing, four things to keep in sync — and syncing them is precisely where transitions start to feel assembled rather than authored.</p>
+
+  <p>Instead: <strong>one custom <code>ShaderPass</code>, one <code>uProgress</code> uniform</strong>, with every effect derived from that single number.</p>
+
+  <figure>
+    <svg viewBox="0 0 640 200" role="img" aria-label="One uProgress uniform feeding four derived effects in a single shader pass">
+      <rect x="8" y="76" width="150" height="48" rx="4" fill="var(--amber)" opacity=".12"/>
+      <rect x="8" y="76" width="150" height="48" rx="4" fill="none" stroke="var(--amber)" stroke-width="1.5"/>
+      <text x="83" y="97" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="13" fill="var(--amber)">uProgress</text>
+      <text x="83" y="114" text-anchor="middle" font-family="Outfit,sans-serif" font-size="11" fill="var(--ink-faint)">0 → 1</text>
+      <g stroke="var(--rule)" stroke-width="1.5" fill="none">
+        <path d="M158 100 C 200 100, 200 30, 250 30"/>
+        <path d="M158 100 C 200 100, 200 77, 250 77"/>
+        <path d="M158 100 C 200 100, 200 123, 250 123"/>
+        <path d="M158 100 C 200 100, 200 170, 250 170"/>
+      </g>
+      <g font-family="Outfit,sans-serif" font-size="13" fill="var(--ink-soft)">
+        <rect x="250" y="14" width="240" height="32" rx="3" fill="var(--surface)" stroke="var(--rule-soft)"/>
+        <text x="264" y="34">Aperture mask — sharp inside the doorway</text>
+        <rect x="250" y="61" width="240" height="32" rx="3" fill="var(--surface)" stroke="var(--rule-soft)"/>
+        <text x="264" y="81">Radial streaks from the vanishing point</text>
+        <rect x="250" y="107" width="240" height="32" rx="3" fill="var(--surface)" stroke="var(--rule-soft)"/>
+        <text x="264" y="127">Chromatic aberration — the warp signature</text>
+        <rect x="250" y="154" width="240" height="32" rx="3" fill="var(--surface)" stroke="var(--rule-soft)"/>
+        <text x="264" y="174">Vignette + tint toward the door's colour</text>
+      </g>
+      <g stroke="var(--dusk-soft)" stroke-width="1" stroke-dasharray="3 4" fill="none">
+        <path d="M490 30 C 540 30, 540 100, 570 100"/>
+        <path d="M490 77 C 540 77, 540 100, 570 100"/>
+        <path d="M490 123 C 540 123, 540 100, 570 100"/>
+        <path d="M490 170 C 540 170, 540 100, 570 100"/>
+      </g>
+      <circle cx="588" cy="100" r="17" fill="var(--dusk)" opacity=".14"/>
+      <circle cx="588" cy="100" r="7" fill="var(--dusk)"/>
+      <text x="588" y="140" text-anchor="middle" font-family="Outfit,sans-serif" font-size="11" fill="var(--ink-faint)">1 draw</text>
+    </svg>
+    <figcaption>Everything derives from one value, so nothing can drift out of sync. Scrubbing <code>uProgress</code> scrubs the entire crossing — which also makes it trivially reversible if someone backs out mid-flight.</figcaption>
+  </figure>
+
+  <p class="rule-note">The pass is <strong>added to the composer only during a crossing and removed on settle</strong>. At rest it costs nothing at all — no idle tax for a transition effect.</p>
+
+  <p>Two details that make it look expensive rather than filtered. The mask should follow the door's <em>projected quad</em>, not a circle, so it matches the real doorway silhouette as it skews. And the chromatic split should scale with distance from centre — zero at the vanishing point, strongest at the frame edge. Uniform aberration reads as a broken lens; radial aberration reads as speed.</p>
+
+  <h2>Seamlessness</h2>
+  <p class="sub">Where transitions usually break, and the four fixes</p>
+
+  <h3>One camera authority, blended — not switched</h3>
+  <p>Today <code>flyTo()</code> disables damping and auto-rotate, kills competing tweens, and the render loop re-asserts distance through <code>_orbitRadius</code> after <code>controls.update()</code>. Three systems each believe they own the camera; correctness comes from turning the others off. Every boundary is a potential pop.</p>
+  <p>The fix is a single <strong>camera director</strong> that owns the camera and holds one state at a time — orbiting, flying, crossing, settled. Transitions between states <em>blend over ~250 ms</em> by interpolating the two candidate positions, rather than flipping authority in one frame. Match the tween's exit velocity to the orbit's entry velocity and the hand-off becomes invisible.</p>
+
+  <h3>Decode before you accelerate</h3>
+  <p>The most likely visible stutter lands exactly at the climax: uploading a texture to the GPU during the warp. Decoding an image or starting a video mid-transition will drop frames precisely where the eye is most engaged.</p>
+  <p>So content loading starts at phase ੧ and must be <strong>GPU-resident before phase ੩ begins</strong> — <code>createImageBitmap()</code> off the main thread, video preloaded and seeked to its first frame. If it isn't ready when the trigger fires, extend phase ੨ rather than warping into a blank quad. The commit beat is the natural buffer.</p>
+
+  <h3>Interruptible, not blocked</h3>
+  <p><code>if (door.isAnimating) return;</code> is safe and feels dead. Tapping a different door mid-flight should <strong>retarget</strong> the camera from wherever it currently is, not be swallowed. Same for backing out — <code>uProgress</code> running to zero reverses the whole crossing for free. Responsiveness is a bigger part of "seamless" than any easing curve.</p>
+
+  <h3>Respect reduced motion</h3>
+  <p>A dolly-plus-warp is precisely the vestibular trigger <code>prefers-reduced-motion</code> exists for. Collapse the crossing to a 200 ms cross-fade. Same destination, same content, no motion.</p>
+
+  <h2>Speed</h2>
+  <p class="sub">Measured against the current build, not hypothetical</p>
+
+  <p>At 60 fps the entire frame budget is <strong>16.7 ms</strong>. Four things in the current build spend it badly, and the first is severe enough to matter before anything else here gets built.</p>
+
+  <div class="budget">
+    <div class="brow">
+      <span class="what">Shadow maps — 8192² on two directional lights</span>
+      <span class="figure-n">≈ 536 MB</span>
+      <span class="bar"><i class="hot" style="width:100%"></i></span>
+      <span class="note">8192 × 8192 × 4 bytes ≈ 268 MB each, re-rendered every frame. At 2048² it's ≈ 33 MB total — a 16× cut with almost no visible loss at these distances. Because sun and moon barely move at ambient speed, set <code>shadow.autoUpdate = false</code> and flag <code>needsUpdate</code> only when the light has moved meaningfully.</span>
+    </div>
+    <div class="brow">
+      <span class="what">After: 2048² + on-demand updates</span>
+      <span class="figure-n">≈ 33 MB</span>
+      <span class="bar"><i class="cool" style="width:6.2%"></i></span>
+      <span class="note">This single change is very likely the difference between the design working on a phone and not.</span>
+    </div>
+    <div class="brow">
+      <span class="what">Allocations inside the render loop</span>
+      <span class="figure-n">≈ 720 / sec</span>
+      <span class="bar"><i class="hot" style="width:44%"></i></span>
+      <span class="note">The day-night block creates eleven <code>THREE.Color</code> objects plus a <code>Vector3</code> every frame — garbage that guarantees periodic GC pauses, which read as random micro-stutters. Hoist them to module-scope temporaries and mutate in place. Cheap fix, removes a whole class of jitter.</span>
+    </div>
+    <div class="brow">
+      <span class="what">Draw calls — 7 meshes per door</span>
+      <span class="figure-n">140 @ 20 doors</span>
+      <span class="bar"><i class="hot" style="width:34%"></i></span>
+      <span class="note">Doubled again by the shadow pass. Both posts already share geometry <em>and</em> material, so the frame parts instance cleanly: <code>InstancedMesh</code> takes the frame from 4×N calls down to 4 total, regardless of door count. Essential once a curriculum means twenty or fifty doors.</span>
+    </div>
+    <div class="brow">
+      <span class="what">Billboarding — CPU <code>lookAt</code> per door per frame</span>
+      <span class="figure-n">N × 60 / sec</span>
+      <span class="bar"><i class="hot" style="width:18%"></i></span>
+      <span class="note">Fine at nine doors, wasteful at fifty, and it blocks instancing since each group needs its own matrix. Billboard in the vertex shader instead and the CPU stops touching transforms entirely.</span>
+    </div>
+  </div>
+
+  <p class="rule-note">Order matters: <strong>shadow maps and loop allocations first</strong>. They're small, safe changes that buy the headroom everything else in this document spends.</p>
+
+  <h3>Hold the budget under pressure</h3>
+  <p>Cap the device pixel ratio adaptively rather than fixing it at 2 — on a 3× phone, rendering at 2× is roughly 2.25× the pixels of 1.33×. Sample frame time over a short window and step the ratio down when it slips. During the warp, resolution can drop noticeably without anyone noticing: the frame is streaked and aberrated by design, which is the one moment detail is genuinely free to lose.</p>
+
+  <h2>What arrives</h2>
+  <p class="sub">The fork forced by the first finding</p>
+
+  <div class="fork">
+    <div class="opt">
+      <h4>CSS3DRenderer — a real live page</h4>
+      <span class="verdict">Not recommended</span>
+      <ul>
+        <li>Genuinely live and interactive</li>
+        <li>But it's DOM over the canvas — the blur, bloom and warp <strong>cannot touch it</strong></li>
+        <li>WebGL can't occlude it correctly</li>
+        <li>Many sites refuse framing via <code>X-Frame-Options</code></li>
+        <li>Expensive to composite on mobile</li>
+      </ul>
+    </div>
+    <div class="opt pick">
+      <h4>Texture, then hand off</h4>
+      <span class="verdict">Recommended</span>
+      <ul>
+        <li>Arrival is always a texture, so the cinematic language survives intact</li>
+        <li>Photo and video are native</li>
+        <li>Third-party sites arrive as a captured preview</li>
+        <li>Once motion settles, cross-fade to real DOM if it needs interaction</li>
+      </ul>
+    </div>
+  </div>
+
+  <p>The rule that makes the seam invisible: <strong>nothing that moves is ever DOM, and nothing interactive is ever WebGL.</strong> The swap happens in the one moment the screen is still.</p>
+
+  <h2>The world as a plan</h2>
+  <p class="sub">Where this stops being a portfolio and becomes something else</p>
+
+  <p>Doors aren't destinations — they're <em>units of a plan</em>, and the count comes from onboarding: six portfolio categories, twenty classes, eleven product ranges. The centre is the goal. Passing through consumes a door. The geometry re-forms so you can always see what you're dealing with.</p>
+
+  <p>One tension to resolve: completed doors "disappear… but you can always go back" pull against each other. The resolution is that <strong>they don't vanish, they recede</strong> — and it cashes in something already built. Duar has concentric rings that currently carry no meaning at all. Give the rings state:</p>
+
+  <figure>
+    <svg viewBox="0 0 620 300" role="img" aria-label="Concentric rings: inner ring active, middle upcoming, outer completed, goal at centre">
+      <g transform="translate(200,150)">
+        <circle r="128" fill="none" stroke="var(--rule)" stroke-width="1" stroke-dasharray="3 5"/>
+        <circle r="88" fill="none" stroke="var(--rule)" stroke-width="1"/>
+        <circle r="48" fill="none" stroke="var(--amber)" stroke-width="1" opacity=".6"/>
+        <g fill="none" stroke="var(--ink-faint)" stroke-width="1.5" opacity=".5">
+          <circle cx="0" cy="-128" r="5"/><circle cx="110" cy="-65" r="5"/>
+          <circle cx="-110" cy="-65" r="5"/><circle cx="70" cy="107" r="5"/>
+        </g>
+        <g fill="var(--dusk-soft)" opacity=".75">
+          <circle cx="0" cy="-88" r="5.5"/><circle cx="84" cy="27" r="5.5"/>
+          <circle cx="-84" cy="27" r="5.5"/><circle cx="52" cy="-71" r="5.5"/>
+        </g>
+        <g fill="var(--amber)">
+          <circle cx="0" cy="-48" r="6.5"/><circle cx="46" cy="14" r="6.5"/>
+          <circle cx="-46" cy="14" r="6.5"/>
+        </g>
+        <circle r="15" fill="var(--amber)" opacity=".14"/>
+        <circle r="7" fill="var(--amber)"/>
+      </g>
+      <g font-family="Outfit,sans-serif" font-size="12.5" fill="var(--ink-soft)">
+        <line x1="368" y1="60" x2="392" y2="60" stroke="var(--ink-faint)" stroke-width="1.5" opacity=".5"/>
+        <text x="402" y="64">Completed — receded, dimmed, still enterable</text>
+        <line x1="368" y1="100" x2="392" y2="100" stroke="var(--dusk-soft)" stroke-width="3"/>
+        <text x="402" y="104">Upcoming — visible, not yet unlocked</text>
+        <line x1="368" y1="140" x2="392" y2="140" stroke="var(--amber)" stroke-width="3"/>
+        <text x="402" y="144">Active — what's next</text>
+        <circle cx="380" cy="180" r="5" fill="var(--amber)"/>
+        <text x="402" y="184">The goal — brightens as doors are consumed</text>
+      </g>
+    </svg>
+    <figcaption>Progress reads as inward collapse: the world empties as the centre fills. "Go back" becomes a spatial act — you walk outward to what you've already done.</figcaption>
+  </figure>
+
+  <p>The inner ring is always <em>what's next</em>, which is a natural focus mechanism for a learner. Completion is legible without a progress bar. And spatial memory survives — the door you finished on Tuesday is still where you left it, just further out and quieter.</p>
+
+  <h3>Re-layout is an animation, not a recalculation</h3>
+  <p>This is where the structural idea meets the seamlessness one. <code>layoutDoor()</code> currently computes a position once at setup. It needs a <code>relayout()</code> that recomputes targets and tweens <code>group.position</code> — and the doors must move on <em>staggered</em> timing, not in unison. Everything sliding at once reads as a UI refresh; a 40 ms stagger outward from the centre reads as the world responding to what you did.</p>
+
+  <h3>The AI plan drops straight in</h3>
+  <p>A generated plan and a Duar world are <em>the same shape</em>: an ordered list of titled units with prerequisites. Because the renderer became data-driven in Phase 0, a plan doesn't need translating into a world. It already is one.</p>
+
+  <pre><span class="c">-- structure belongs to the world</span>
+worlds     <span class="k">kind</span> 'portfolio' | 'curriculum' | 'catalog'
+           <span class="k">goal_title</span>          <span class="c">-- what the centre represents</span>
+
+doors      <span class="k">order_index</span>         <span class="c">-- sequence, for curricula</span>
+           <span class="k">prerequisite_ids</span>    <span class="c">-- what unlocks this</span>
+           <span class="k">completion_rule</span>     'manual' | 'video_ended' | 'scrolled'
+
+<span class="c">-- progress is personal, so it lives apart from structure</span>
+door_progress
+           <span class="k">user_id</span>, <span class="k">door_id</span>
+           <span class="k">state</span>  'locked' | 'available' | 'active' | 'completed'
+           <span class="k">completed_at</span></pre>
+
+  <p>The split matters: two people working the same curriculum see the same doors in different states, so progress can't live on the <code>doors</code> row.</p>
+
+  <h2>What I need from you</h2>
+  <p class="sub">Each of these changes what gets built</p>
+
+  <div class="decide">
+    <p class="q">Which product is v1?</p>
+    <p class="why">A portfolio shell and a learning engine share geometry but diverge on unlocking, progress, completion and who authors the plan. Building both at once builds neither well.</p>
+  </div>
+  <div class="decide">
+    <p class="q">What counts as "completely seen"?</p>
+    <p class="why">You tied door disappearance to a room being fully viewed. Inferring that is unreliable and infuriating when wrong. I'd suggest explicit completion, plus automatic for video.</p>
+  </div>
+  <div class="decide">
+    <p class="q">How many doors is too many?</p>
+    <p class="why">Twenty is fine. A hundred isn't — legibility collapses before frame rate does, even with instancing. Paging, or a natural cap?</p>
+  </div>
+  <div class="decide">
+    <p class="q">Live third-party pages, or previews?</p>
+    <p class="why">Picking "preview" keeps the cinematic promise whole; picking "live" means the blur and warp stop at the moment content lands.</p>
+  </div>
+
+  <h2>Risks worth naming</h2>
+  <ul class="plain">
+    <li><strong>Reading long-form content inside a 3D scene is uncomfortable.</strong> The room should be a comfortable flat reading surface you <em>arrive at</em> cinematically — not text floating in space.</li>
+    <li><strong>This is a pivot, not a feature.</strong> "3D linktree" and "spatial curriculum engine" are different products for different people. Worth deciding deliberately rather than drifting.</li>
+    <li><strong>Doors that vanish can feel like loss.</strong> Receding fixes the mechanics; watch that it still reads as reward rather than removal.</li>
+    <li><strong>The crossing is ~3 seconds long.</strong> Beautiful once, tedious the fortieth time. It needs a skip — and probably a shorter variant for doors you've already entered.</li>
+  </ul>
+
+</div>
