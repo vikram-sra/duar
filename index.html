@@ -178,31 +178,93 @@
       opacity: 0.9;
     }
 
+    /* Entry refusal: nothing is built behind the doors yet, so the Enter dot
+       head-shakes and says so. Keyframes must carry the -50% centring, or the
+       label jumps left the moment the animation takes over. */
+    @keyframes reticleRefuse {
+      0%, 100% { transform: translateX(-50%); }
+      15%      { transform: translateX(calc(-50% - 6px)); }
+      30%      { transform: translateX(calc(-50% + 6px)); }
+      45%      { transform: translateX(calc(-50% - 4px)); }
+      60%      { transform: translateX(calc(-50% + 4px)); }
+      80%      { transform: translateX(calc(-50% - 2px)); }
+    }
+
+    .reticle-label.refuse {
+      animation: reticleRefuse 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+      color: #ff8a80;
+      letter-spacing: 0.2rem;
+      text-indent: 0.2rem;
+    }
+
+    /* The dot flinches on the same beat, so the refusal reads as one gesture. */
+    @keyframes dotRefuse {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(227,43,43,0.25), 0 0 12px rgba(227,43,43,0.5); }
+      50%      { box-shadow: 0 0 0 5px rgba(227,43,43,0.42), 0 0 22px rgba(227,43,43,0.8); }
+    }
+
+    #reticle.refuse { animation: dotRefuse 0.5s ease; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .reticle-label.refuse, #reticle.refuse { animation: none; }
+    }
+
     /* "Go Back" exit under the Enter dot — closes the door and returns home */
+    /* Exit: a cross in a circle, the only thing inside the doorway that isn't a refusal */
     .reticle-back {
       position: absolute;
       top: 100px;
       left: 50%;
       transform: translateX(-50%);
-      color: rgba(255, 255, 255, 0.55);
-      font-family: 'Outfit', sans-serif;
-      font-size: 10px;
-      font-weight: 400;
-      letter-spacing: 0.3rem;
-      text-indent: 0.3rem;
-      white-space: nowrap;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: rgba(10, 12, 18, 0.35);
+      backdrop-filter: blur(8px) saturate(150%);
+      -webkit-backdrop-filter: blur(8px) saturate(150%);
+      color: rgba(255, 255, 255, 0.65);
       cursor: pointer;
       pointer-events: none;
-      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
-      transition: color 0.2s ease;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+      transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+    }
+
+    .reticle-back svg {
+      width: 12px;
+      height: 12px;
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.6;
+      stroke-linecap: round;
     }
 
     #reticle.visible .reticle-back {
       pointer-events: auto;
     }
 
+    /* The ring and the "Enter" caption are part of the same target as the dot —
+       clicking any of them refuses, so the hit area matches what's on screen
+       instead of just the 10px dot. They bubble to #reticle's click handler. */
+    #reticle.visible .reticle-ring,
+    #reticle.visible .reticle-label {
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
     .reticle-back:hover {
       color: #fff;
+      border-color: rgba(255, 255, 255, 0.5);
+      background: rgba(10, 12, 18, 0.55);
+      transform: translateX(-50%) scale(1.08);
+    }
+
+    .reticle-back:active {
+      transform: translateX(-50%) scale(0.94);
     }
 
     /* Subtle cinematic vignette */
@@ -411,7 +473,9 @@
     <span class="reticle-title"></span>
     <span class="reticle-ring"></span>
     <span class="reticle-label">Enter</span>
-    <span class="reticle-back">Go Back</span>
+    <span class="reticle-back" role="button" aria-label="Go back" title="Go back">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+    </span>
   </div>
 
 

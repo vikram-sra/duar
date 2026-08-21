@@ -12,7 +12,7 @@ const CONFIG = {
         "camera": { "fov": 50, "startPosition": [0, 8, 20] }
     },
     "doors": [
-        { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: "/models/door_rustic.glb", position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "https://waveism.duar.one", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
+        { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: "/models/door_rustic.glb", position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
         { id: "blog", label: "BLOG", type: "scifi_portal", modelPath: "/models/door_scifi.glb", position: [-5, 0, -9], rotation: [0, 0.2, 0], destinationUrl: "/blog", animation: "slideUp", color: 0x88ccff, particles: "tech" },
         { id: "projects", label: "PROJECTS", type: "iron_gate", modelPath: "/models/gate_iron.glb", position: [0, 0, -10], rotation: [0, 0, 0], destinationUrl: "https://waveism.duar.one", animation: "swingBoth", color: 0xffeeaa, particles: "sparks" },
         { id: "contact", label: "CONTACT", type: "stone_arch", modelPath: "/models/arch_stone.glb", position: [5, 0, -9], rotation: [0, -0.2, 0], destinationUrl: "mailto:you@example.com", animation: "dissolveField", color: 0xcc88ff, particles: "runes" },
@@ -52,11 +52,18 @@ class DuarApp {
     _bindReticle() {
         const reticle = document.getElementById('reticle');
         if (!reticle) return;
-        // Enter dot: intentionally inert for now — swallow the event so the click neither
-        // travels nor bubbles to the door/canvas behind it.
-        ['pointerdown', 'pointerup', 'click'].forEach(ev =>
+        // Swallow pointer events so a click on the reticle never reaches the door or
+        // canvas behind it.
+        ['pointerdown', 'pointerup'].forEach(ev =>
             reticle.addEventListener(ev, (e) => e.stopPropagation())
         );
+        // Enter dot: nothing is built behind any door yet, so every door refuses.
+        // ("Go Back" is a child of #reticle but stops propagation, so its clicks
+        // never reach this handler.)
+        reticle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._refuseEntry();
+        });
         // "Go Back": close the open door and fly home.
         const backBtn = reticle.querySelector('.reticle-back');
         if (backBtn) {
@@ -65,6 +72,36 @@ class DuarApp {
                 if (!this.isTraveling) this.resetScene();
             });
         }
+    }
+
+    // Swap the "Enter" caption for a status message, then restore it.
+    _flashReticleLabel(message) {
+        const label = document.querySelector('#reticle .reticle-label');
+        if (!label) return;
+        if (!this._reticleLabelDefault) this._reticleLabelDefault = label.textContent;
+        label.textContent = message;
+        clearTimeout(this._reticleLabelTimeout);
+        this._reticleLabelTimeout = setTimeout(() => {
+            label.textContent = this._reticleLabelDefault;
+            label.classList.remove('refuse');
+        }, 1600);
+    }
+
+    // Shake the reticle and say so — a refusal you feel before you read it.
+    _refuseEntry(message = 'Coming soon') {
+        const reticle = document.getElementById('reticle');
+        const label = reticle?.querySelector('.reticle-label');
+        this._flashReticleLabel(message);
+        if (!reticle || !label) return;
+
+        // Restart the animation on repeated taps: drop the class, force a reflow, then
+        // re-add. Without the reflow the browser coalesces it and nothing moves.
+        reticle.classList.remove('refuse');
+        label.classList.remove('refuse');
+        void reticle.offsetWidth;
+        reticle.classList.add('refuse');
+        label.classList.add('refuse');
+        setTimeout(() => reticle.classList.remove('refuse'), 500);
     }
 
     _showReticle() {
@@ -599,9 +636,11 @@ class DuarApp {
                     }
 
                     if (door) {
-                        // All clicks on a door only toggle open/close.
-                        // Travel is exclusively triggered by the center reticle dot.
-                        this.toggleDoor(door);
+                        // Clicking anywhere inside an already-open door is an attempt to
+                        // go through it, so it refuses like the Enter dot does. The cross
+                        // is the only way back out. A different, closed door still opens.
+                        if (door.isOpen) this._refuseEntry();
+                        else this.toggleDoor(door);
                     }
                 }
             }
