@@ -1898,6 +1898,9 @@ class DuarApp {
 
             this.moonMesh.rotation.y = Math.atan2(-x, zPlane) + Math.PI;
 
+            const sH = Math.max(0, Math.sin(this.sunAngle));
+            const mH = Math.max(0, -Math.sin(this.sunAngle));
+
             // Concurrent cross-fade & smart shadow pass (only compute shadow for active celestial light)
             const isSunActive = sH > 0.04;
             const isMoonActive = mH > 0.04;
