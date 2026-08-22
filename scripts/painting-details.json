@@ -1,0 +1,29 @@
+{
+  "_comment": "Titles, years and real canvas sizes, transcribed from the Instagram detail screenshots in 'portfolio/paintings details/' and matched to each photo. Sizes are INCHES; orientation is resolved automatically against each photo's aspect, since the posts are inconsistent about listing width or height first. YEAR drives the rings: newest sit innermost, older further out. Where a post didn't state a year, the posting date is used as a proxy for recency — good enough for ordering, not a claim about when it was painted. Entries marked confidence 'low' were not matched conclusively; correct them here and re-run `npm run portfolio`. Anything with no entry falls back to a 16in long edge and sorts last.",
+
+  "paintings": {
+    "_DSC8504":       { "title": "A Nice Blue Room",                 "size": [16, 16], "year": 2025, "confidence": "high" },
+    "_DSC9451":       { "title": "Anti-Morning-Gravity",             "size": [14, 24], "year": 2025, "confidence": "high" },
+    "_DSC9851":       { "title": "Leaving Shape",                    "size": [13, 13], "year": 2025, "confidence": "low" },
+    "_DSC8944":       { "title": "AM fire after a rainy night",      "size": [16, 16], "year": 2025, "confidence": "high" },
+    "_DSC8434small":  { "title": "wore white, found mud",            "size": [16, 16], "year": 2025, "confidence": "high" },
+    "_DSC8505":       { "title": "Extra",                            "size": [16, 16], "year": 2025, "confidence": "high" },
+    "_DSC0284":       { "title": "ਗੁਲ ਗੁਮਨਾਮ / Flowers Unnamed",      "size": [14, 16], "year": 2025, "confidence": "high" },
+    "_DSC0165-3":     { "title": "The Third Eye of The White Horse", "size": [30, 16], "year": 2025, "confidence": "high" },
+    "_DSC9978":       { "title": "ਨਰਮ ਅੰਦਰੂਨ / Narm Androon",         "size": [14, 26], "year": 2025, "confidence": "medium" },
+    "_DSC8510":       { "title": "Summer",                                             "year": 2025, "confidence": "low" },
+
+    "_DSC8445":       { "title": "March 1989",                       "size": [28, 32], "year": 2024, "confidence": "high" },
+    "_DSC6740Large":  { "title": "Summer Seep",                      "size": [28, 30], "year": 2024, "confidence": "high" },
+    "_DSC5207_1":     { "title": "Room for Mystery",                 "size": [18, 24], "year": 2024, "confidence": "medium" },
+    "_DSC5199":       { "title": "The door, Ring the Bell",                            "year": 2024, "confidence": "medium" },
+    "_DSC5198_1":     { "title": "Evidently Invisible",                                "year": 2024, "confidence": "medium" },
+    "_DSC5167":       { "title": "I hit a wall while deciding between Red and White",   "year": 2024, "confidence": "medium" },
+    "_DSC6711Large":  { "title": "Looking Back",                                       "year": 2024, "confidence": "low" },
+
+    "_DSC3062-new":   { "title": "ਚਿੰਤਾ / ਚਿੰਤਨ",                      "size": [48, 36], "year": 2023, "confidence": "high" },
+    "_DSC0153":       { "title": "Sunsets",                                            "year": 2023, "confidence": "low" },
+
+    "_DSC3085":       { "title": "With a form after all",                              "year": 2022, "confidence": "medium" }
+  }
+}

@@ -7,10 +7,10 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import gsap from 'gsap';
 
 import { loadManifest } from './src/portfolio/manifest.js';
-import { layoutPaintings } from './src/portfolio/layout.js';
+import { layoutPaintings, byYearNewestFirst } from './src/portfolio/layout.js';
 import {
-    createPaintingDoor, loadPaintingTexture, focusDistanceFor, PANEL_HEIGHT,
-    postGeometry, frameMaterial
+    createPaintingDoor, loadPaintingTexture, focusDistanceFor,
+    unitBox, unitPlane, frameMaterial
 } from './src/portfolio/paintingDoor.js';
 
 const CONFIG = {
@@ -76,8 +76,9 @@ class DuarApp {
             if (this.viewMode === 'portfolio') return;
             this._refuseEntry();
         });
-        // "Go Back": close the open door and fly home.
-        const backBtn = reticle.querySelector('.reticle-back');
+        // "Go Back": close the open door and fly home. It's a sibling of #reticle now,
+        // so query the document rather than the reticle.
+        const backBtn = document.querySelector('.reticle-back');
         if (backBtn) {
             backBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -121,8 +122,21 @@ class DuarApp {
         if (!reticle) return;
         // In portfolio view the dot, ring and "Enter" caption are hidden — a
         // painting is looked at, not entered — leaving only the cross to exit.
-        reticle.classList.toggle('art-mode', this.viewMode === 'portfolio');
+        const art = this.viewMode === 'portfolio';
+        reticle.classList.toggle('art-mode', art);
+        if (art) {
+            // The title element keeps whatever door was last opened in the default
+            // view; without clearing it, a stale "duar-੯" floats over the painting.
+            const titleEl = reticle.querySelector('.reticle-title');
+            if (titleEl) titleEl.textContent = '';
+        }
         reticle.classList.add('visible');
+
+        const back = document.querySelector('.reticle-back');
+        if (back) {
+            back.classList.toggle('art', art);
+            back.classList.add('visible');
+        }
         gsap.fromTo(reticle,
             { opacity: 0, scale: 0 },
             { opacity: 1, scale: 1, duration: 0.5, ease: 'back.out(1.7)', overwrite: true }
@@ -132,9 +146,12 @@ class DuarApp {
     _hideReticle() {
         const reticle = document.getElementById('reticle');
         if (!reticle) return;
+        // Drop the portfolio-specific styling as well as visibility, so switching
+        // back to the doors can't inherit art-mode from the gallery.
+        document.querySelector('.reticle-back')?.classList.remove('visible', 'art');
         gsap.to(reticle, {
             opacity: 0, scale: 0, duration: 0.3, ease: 'power2.in', overwrite: true,
-            onComplete: () => reticle.classList.remove('visible')
+            onComplete: () => reticle.classList.remove('visible', 'art-mode')
         });
     }
 
@@ -1350,7 +1367,7 @@ class DuarApp {
                 // Identity, not name: only the two module-level shared assets survive.
                 // Matching on name === 'Frame' also spared the per-door lintel and base
                 // geometries, which leaked ~119 geometries per view switch.
-                if (obj.geometry && obj.geometry !== postGeometry) obj.geometry.dispose();
+                if (obj.geometry && obj.geometry !== unitBox && obj.geometry !== unitPlane) obj.geometry.dispose();
                 if (obj.material && obj.material !== frameMaterial) {
                     if (obj.material.map && obj.material.map !== door._texture) obj.material.map.dispose();
                     obj.material.dispose();
@@ -1429,14 +1446,15 @@ class DuarApp {
             return;
         }
 
-        const placed = layoutPaintings(manifest.paintings);
+        // Time runs outward: newest work on the inner ring, older further out.
+        const placed = layoutPaintings(byYearNewestFirst(manifest.paintings));
 
         placed.forEach(({ painting, ring, radius, x, z, width }) => {
             const group = new THREE.Group();
             group.position.set(x, 0, z);
             this.scene.add(group);
 
-            const { panel, panelMaterial } = createPaintingDoor(group, painting);
+            const { panel, panelMaterial, height, centreY } = createPaintingDoor(group, painting);
 
             const doorObj = {
                 group,
@@ -1444,6 +1462,8 @@ class DuarApp {
                 panel,
                 panelMaterial,
                 width,
+                height,
+                centreY,
                 ring,
                 radius,
                 isOpen: false,
@@ -1467,10 +1487,18 @@ class DuarApp {
         });
 
         // Resolve the near rings first — the art someone is actually looking at.
-        this.doors
-            .slice()
-            .sort((a, b) => a.radius - b.radius)
-            .forEach((door, i) => setTimeout(() => loadPaintingTexture(door), i * 60));
+        const byDistance = this.doors.slice().sort((a, b) => a.radius - b.radius);
+        byDistance.forEach((door, i) => setTimeout(() => loadPaintingTexture(door), i * 60));
+
+        // Open on the newest painting: it's first in the sorted order, so it's the
+        // innermost. Wait for its texture before flying, or the gallery would open
+        // on a blank grey panel.
+        const newest = this.doors[0];
+        if (newest) {
+            loadPaintingTexture(newest, () => {
+                if (this.viewMode === 'portfolio' && !this.activeDoor) this.focusPainting(newest);
+            });
+        }
     }
 
     // Fly to a painting and centre it, framed so the whole work is on screen.
@@ -1481,13 +1509,15 @@ class DuarApp {
 
         const worldPos = new THREE.Vector3();
         door.group.getWorldPosition(worldPos);
-        const target = new THREE.Vector3(worldPos.x, PANEL_HEIGHT / 2 + 0.05, worldPos.z);
+        // Aim at the painting's own centre — they're different heights now, so a
+        // fixed eye level would frame a 48in canvas and a 13in study quite differently.
+        const target = new THREE.Vector3(worldPos.x, door.centreY, worldPos.z);
 
         // Approach along the painting's own facing, so it's square-on.
         const dir = new THREE.Vector3().subVectors(this.camera.position, target).setY(0).normalize();
-        const distance = focusDistanceFor(door.width, PANEL_HEIGHT, this.camera);
+        const distance = focusDistanceFor(door.width, door.height, this.camera);
         const camPos = target.clone().addScaledVector(dir, distance);
-        camPos.y = PANEL_HEIGHT / 2 + 0.05;
+        camPos.y = door.centreY;
 
         this.activeDoor = door;
         this.flyTo(camPos, target, 1.6, () => {

@@ -11,8 +11,26 @@
 //   npm run portfolio
 
 import { execFileSync } from 'node:child_process';
-import { readdirSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
+import { readdirSync, mkdirSync, writeFileSync, statSync, readFileSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
+
+// Titles and real canvas sizes, transcribed from the detail screenshots.
+const DETAILS = JSON.parse(readFileSync('scripts/painting-details.json', 'utf8')).paintings;
+
+// Long edge in inches for anything we have no measurement for — the median of
+// the sizes we do know, so unmeasured work doesn't stand out either way.
+const DEFAULT_LONG_EDGE_IN = 16;
+
+// The posts are inconsistent about whether they list width or height first
+// ("48 x 36" on a portrait canvas). Rather than trust the order, try both and
+// keep whichever matches the photograph's own aspect ratio.
+function orientSize(size, photoAspect) {
+    if (!size) return null;
+    const [a, b] = size;
+    const asIs = Math.abs((a / b) - photoAspect);
+    const flipped = Math.abs((b / a) - photoAspect);
+    return flipped < asIs ? { widthIn: b, heightIn: a } : { widthIn: a, heightIn: b };
+}
 
 const SRC = 'portfolio';
 const OUT = join('public', 'portfolio');
@@ -65,17 +83,32 @@ for (const file of sources) {
     const bytes = statSync(outPath).size;
     totalBytes += bytes;
 
+    const aspect = Number((width / height).toFixed(4));
+    const detail = DETAILS[id] || {};
+    const measured = orientSize(detail.size, aspect);
+
+    // Real canvas size drives how big the painting stands in the world. Without a
+    // measurement, assume a 16in long edge so it sits mid-pack rather than dominating.
+    const heightIn = measured
+        ? measured.heightIn
+        : (aspect >= 1 ? DEFAULT_LONG_EDGE_IN / aspect : DEFAULT_LONG_EDGE_IN);
+
     paintings.push({
         id,
         file: outName,
         width,                                   // original pixels — drives panel aspect
         height,
-        aspect: Number((width / height).toFixed(4)),
-        title: ''                                // fill these in by hand later
+        aspect,
+        heightIn: Number(heightIn.toFixed(2)),   // real canvas height, in inches
+        widthIn: Number((heightIn * aspect).toFixed(2)),
+        measured: Boolean(measured),             // false = assumed, not from a post
+        title: detail.title || '',
+        year: detail.year || null
     });
 
     const kb = String(Math.round(bytes / 1024)).padStart(5);
-    console.log(`  ${kb} KB  ${outName}  ${width}×${height}  aspect ${(width / height).toFixed(3)}`);
+    const tag = measured ? `${measured.widthIn}×${measured.heightIn}in` : 'assumed 16in';
+    console.log(`  ${kb} KB  ${outName}  aspect ${aspect.toFixed(3)}  ${tag}`);
 }
 
 writeFileSync(

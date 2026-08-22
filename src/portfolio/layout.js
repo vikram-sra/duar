@@ -1,4 +1,4 @@
-import { panelWidthFor } from './paintingDoor.js';
+import { panelSizeFor } from './paintingDoor.js';
 
 // Placing paintings of wildly different widths on concentric rings.
 //
@@ -26,7 +26,14 @@ export function distributeAcrossRings(count, ringCount = RING_RADII.length) {
     return per;
 }
 
+// Newest first, so the innermost ring holds the most recent work and each ring
+// outward steps further back in time. Undated paintings sort last, to the outside.
+export function byYearNewestFirst(paintings) {
+    return [...paintings].sort((a, b) => (b.year || 0) - (a.year || 0));
+}
+
 // Returns [{ painting, ring, radius, angle, width }] with no two panels overlapping.
+// `paintings` is consumed in order, so sort before calling.
 export function layoutPaintings(paintings, radii = RING_RADII) {
     const perRing = distributeAcrossRings(paintings.length, radii.length);
     const placed = [];
@@ -37,7 +44,7 @@ export function layoutPaintings(paintings, radii = RING_RADII) {
         index += perRing[ring];
         if (!slice.length) return;
 
-        const widths = slice.map(p => panelWidthFor(p.aspect));
+        const widths = slice.map(p => panelSizeFor(p).width);
 
         // Angle each panel subtends at this radius, via the chord it spans.
         const spans = widths.map(w => 2 * Math.asin(Math.min(w / (2 * radius), 0.999)));

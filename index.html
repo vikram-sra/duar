@@ -210,11 +210,14 @@
     }
 
     /* "Go Back" exit under the Enter dot — closes the door and returns home */
-    /* Exit: a cross in a circle, the only thing inside the doorway that isn't a refusal */
+    /* Exit: a cross in a circle, the only thing inside the doorway that isn't a refusal.
+       Lives outside #reticle (see the markup) so it can position against the viewport. */
     .reticle-back {
-      position: absolute;
-      top: 100px;
+      position: fixed;
+      top: calc(50% + 100px);
       left: 50%;
+      z-index: 9001;
+      opacity: 0;
       transform: translateX(-50%);
       width: 30px;
       height: 30px;
@@ -243,8 +246,17 @@
       stroke-linecap: round;
     }
 
-    #reticle.visible .reticle-back {
+    .reticle-back.visible {
+      opacity: 1;
       pointer-events: auto;
+    }
+
+    /* Portfolio view: sit just under the bottom edge of the framed painting rather
+       than over the middle of it — and above the dock, which occupies roughly
+       45–81px from the bottom. */
+    .reticle-back.art {
+      top: auto;
+      bottom: calc(104px + env(safe-area-inset-bottom));
     }
 
     /* The ring and the "Enter" caption are part of the same target as the dot —
@@ -268,9 +280,6 @@
       display: none;
     }
 
-    #reticle.art-mode .reticle-back {
-      top: 40px;
-    }
 
     .reticle-back:hover {
       color: #fff;
@@ -530,10 +539,14 @@
     <span class="reticle-title"></span>
     <span class="reticle-ring"></span>
     <span class="reticle-label">Enter</span>
-    <span class="reticle-back" role="button" aria-label="Go back" title="Go back">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
-    </span>
   </div>
+
+  <!-- Deliberately a sibling of #reticle, not a child: #reticle is transformed, and a
+       transformed ancestor becomes the containing block for position:fixed descendants,
+       which would pin this to the reticle instead of the viewport. -->
+  <span class="reticle-back" role="button" aria-label="Go back" title="Go back">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+  </span>
 
 
   <script type="module" src="/main.js"></script>

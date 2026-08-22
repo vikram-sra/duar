@@ -7,7 +7,11 @@
       "width": 2620,
       "height": 2620,
       "aspect": 1,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 16,
+      "measured": false,
+      "title": "Sunsets",
+      "year": 2023
     },
     {
       "id": "_DSC0165-3",
@@ -15,7 +19,11 @@
       "width": 4080,
       "height": 1910,
       "aspect": 2.1361,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 34.18,
+      "measured": true,
+      "title": "The Third Eye of The White Horse",
+      "year": 2025
     },
     {
       "id": "_DSC0167",
@@ -23,7 +31,23 @@
       "width": 2564,
       "height": 3242,
       "aspect": 0.7909,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 12.65,
+      "measured": false,
+      "title": "",
+      "year": null
+    },
+    {
+      "id": "_DSC0284",
+      "file": "_DSC0284.jpg",
+      "width": 2112,
+      "height": 1842,
+      "aspect": 1.1466,
+      "heightIn": 14,
+      "widthIn": 16.05,
+      "measured": true,
+      "title": "ਗੁਲ ਗੁਮਨਾਮ / Flowers Unnamed",
+      "year": 2025
     },
     {
       "id": "_DSC2092-2",
@@ -31,7 +55,23 @@
       "width": 1050,
       "height": 1350,
       "aspect": 0.7778,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 12.44,
+      "measured": false,
+      "title": "",
+      "year": null
+    },
+    {
+      "id": "_DSC3062-new",
+      "file": "_DSC3062-new.jpg",
+      "width": 1080,
+      "height": 1441,
+      "aspect": 0.7495,
+      "heightIn": 48,
+      "widthIn": 35.98,
+      "measured": true,
+      "title": "ਚਿੰਤਾ / ਚਿੰਤਨ",
+      "year": 2023
     },
     {
       "id": "_DSC3062",
@@ -39,7 +79,11 @@
       "width": 2611,
       "height": 3264,
       "aspect": 0.7999,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 12.8,
+      "measured": false,
+      "title": "",
+      "year": null
     },
     {
       "id": "_DSC3085",
@@ -47,7 +91,11 @@
       "width": 1536,
       "height": 1920,
       "aspect": 0.8,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 12.8,
+      "measured": false,
+      "title": "With a form after all",
+      "year": 2022
     },
     {
       "id": "_DSC3363_2",
@@ -55,7 +103,11 @@
       "width": 2312,
       "height": 2851,
       "aspect": 0.8109,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 12.97,
+      "measured": false,
+      "title": "",
+      "year": null
     },
     {
       "id": "_DSC5167",
@@ -63,7 +115,11 @@
       "width": 1536,
       "height": 1920,
       "aspect": 0.8,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 12.8,
+      "measured": false,
+      "title": "I hit a wall while deciding between Red and White",
+      "year": 2024
     },
     {
       "id": "_DSC5198_1",
@@ -71,7 +127,11 @@
       "width": 1080,
       "height": 1350,
       "aspect": 0.8,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 12.8,
+      "measured": false,
+      "title": "Evidently Invisible",
+      "year": 2024
     },
     {
       "id": "_DSC5199",
@@ -79,7 +139,11 @@
       "width": 2310,
       "height": 2310,
       "aspect": 1,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 16,
+      "measured": false,
+      "title": "The door, Ring the Bell",
+      "year": 2024
     },
     {
       "id": "_DSC5207_1",
@@ -87,7 +151,11 @@
       "width": 1080,
       "height": 1350,
       "aspect": 0.8,
-      "title": ""
+      "heightIn": 24,
+      "widthIn": 19.2,
+      "measured": true,
+      "title": "Room for Mystery",
+      "year": 2024
     },
     {
       "id": "_DSC6711Large",
@@ -95,7 +163,23 @@
       "width": 4021,
       "height": 2262,
       "aspect": 1.7776,
-      "title": ""
+      "heightIn": 9,
+      "widthIn": 16,
+      "measured": false,
+      "title": "Looking Back",
+      "year": 2024
+    },
+    {
+      "id": "_DSC6740Large",
+      "file": "_DSC6740Large.jpg",
+      "width": 1841,
+      "height": 2088,
+      "aspect": 0.8817,
+      "heightIn": 30,
+      "widthIn": 26.45,
+      "measured": true,
+      "title": "Summer Seep",
+      "year": 2024
     },
     {
       "id": "_DSC7622",
@@ -103,7 +187,11 @@
       "width": 4710,
       "height": 3536,
       "aspect": 1.332,
-      "title": ""
+      "heightIn": 12.01,
+      "widthIn": 16,
+      "measured": false,
+      "title": "",
+      "year": null
     },
     {
       "id": "_DSC8434small",
@@ -111,7 +199,11 @@
       "width": 1080,
       "height": 1084,
       "aspect": 0.9963,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 15.94,
+      "measured": true,
+      "title": "wore white, found mud",
+      "year": 2025
     },
     {
       "id": "_DSC8445",
@@ -119,7 +211,11 @@
       "width": 2540,
       "height": 2934,
       "aspect": 0.8657,
-      "title": ""
+      "heightIn": 32,
+      "widthIn": 27.7,
+      "measured": true,
+      "title": "March 1989",
+      "year": 2024
     },
     {
       "id": "_DSC8504",
@@ -127,7 +223,11 @@
       "width": 2993,
       "height": 3071,
       "aspect": 0.9746,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 15.59,
+      "measured": true,
+      "title": "A Nice Blue Room",
+      "year": 2025
     },
     {
       "id": "_DSC8505",
@@ -135,7 +235,11 @@
       "width": 2889,
       "height": 2948,
       "aspect": 0.98,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 15.68,
+      "measured": true,
+      "title": "Extra",
+      "year": 2025
     },
     {
       "id": "_DSC8510",
@@ -143,7 +247,11 @@
       "width": 2980,
       "height": 3052,
       "aspect": 0.9764,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 15.62,
+      "measured": false,
+      "title": "Summer",
+      "year": 2025
     },
     {
       "id": "_DSC8944",
@@ -151,7 +259,11 @@
       "width": 3393,
       "height": 3335,
       "aspect": 1.0174,
-      "title": ""
+      "heightIn": 16,
+      "widthIn": 16.28,
+      "measured": true,
+      "title": "AM fire after a rainy night",
+      "year": 2025
     },
     {
       "id": "_DSC9451",
@@ -159,7 +271,11 @@
       "width": 3939,
       "height": 2210,
       "aspect": 1.7824,
-      "title": ""
+      "heightIn": 14,
+      "widthIn": 24.95,
+      "measured": true,
+      "title": "Anti-Morning-Gravity",
+      "year": 2025
     },
     {
       "id": "_DSC9851",
@@ -167,7 +283,11 @@
       "width": 1960,
       "height": 3857,
       "aspect": 0.5082,
-      "title": ""
+      "heightIn": 13,
+      "widthIn": 6.61,
+      "measured": true,
+      "title": "Leaving Shape",
+      "year": 2025
     },
     {
       "id": "_DSC9978",
@@ -175,7 +295,11 @@
       "width": 1821,
       "height": 3580,
       "aspect": 0.5087,
-      "title": ""
+      "heightIn": 26,
+      "widthIn": 13.23,
+      "measured": true,
+      "title": "ਨਰਮ ਅੰਦਰੂਨ / Narm Androon",
+      "year": 2025
     }
   ]
 }
