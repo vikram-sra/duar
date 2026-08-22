@@ -2,6 +2,76 @@
   "maxEdge": 1400,
   "paintings": [
     {
+      "id": "A Box in Paradise",
+      "file": "A Box in Paradise.jpg",
+      "width": 3072,
+      "height": 4080,
+      "aspect": 0.7529,
+      "heightIn": 16,
+      "widthIn": 12.05,
+      "measured": true,
+      "title": "A Box in Paradise",
+      "year": 2022,
+      "medium": "Acrylics on handmade paper",
+      "description": "I wish I were a poet instead of a painter, so I could explain, what isn't home, with a lot more drama."
+    },
+    {
+      "id": "Explaining",
+      "file": "Explaining.jpg",
+      "width": 3072,
+      "height": 4080,
+      "aspect": 0.7529,
+      "heightIn": 16,
+      "widthIn": 12.05,
+      "measured": true,
+      "title": "Explaining",
+      "year": 2022,
+      "medium": "Acrylic on handmade paper",
+      "description": ""
+    },
+    {
+      "id": "Provocative IMG_20231212_083308_427",
+      "file": "Provocative IMG_20231212_083308_427.jpg",
+      "width": 754,
+      "height": 878,
+      "aspect": 0.8588,
+      "heightIn": 16,
+      "widthIn": 13.74,
+      "measured": true,
+      "title": "~provocative",
+      "year": 2022,
+      "medium": "Acrylic on handmade paper",
+      "description": "Self portrait, 2022"
+    },
+    {
+      "id": "Untitiled",
+      "file": "Untitiled.jpg",
+      "width": 3589,
+      "height": 3057,
+      "aspect": 1.174,
+      "heightIn": 12,
+      "widthIn": 14.09,
+      "measured": true,
+      "title": "Untitled",
+      "year": 2022,
+      "medium": "Acrylic on handmade paper",
+      "description": ""
+    },
+    {
+      "id": "Voices in My head",
+      "file": "Voices in My head.jpg",
+      "width": 2706,
+      "height": 3362,
+      "aspect": 0.8049,
+      "heightIn": 20,
+      "widthIn": 16.1,
+      "measured": true,
+      "title": "Voices in My head",
+      "year": 2022,
+      "medium": "Oil on canvas",
+      "description": ""
+    },
+    {
       "id": "_DSC0153",
       "file": "_DSC0153.jpg",
       "width": 2620,
@@ -9,9 +79,11 @@
       "aspect": 1,
       "heightIn": 16,
       "widthIn": 16,
-      "measured": false,
-      "title": "Sunsets",
-      "year": 2023
+      "measured": true,
+      "title": "Sunsets are easy, Hide the Sun behind your thumb",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": "Sunsets are easy, Hide the Sun behind your thumb."
     },
     {
       "id": "_DSC0165-3",
@@ -23,19 +95,9 @@
       "widthIn": 34.18,
       "measured": true,
       "title": "The Third Eye of The White Horse",
-      "year": 2025
-    },
-    {
-      "id": "_DSC0167",
-      "file": "_DSC0167.jpg",
-      "width": 2564,
-      "height": 3242,
-      "aspect": 0.7909,
-      "heightIn": 16,
-      "widthIn": 12.65,
-      "measured": false,
-      "title": "",
-      "year": null
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC0284",
@@ -47,23 +109,13 @@
       "widthIn": 16.05,
       "measured": true,
       "title": "ਗੁਲ ਗੁਮਨਾਮ / Flowers Unnamed",
-      "year": 2025
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
-      "id": "_DSC2092-2",
-      "file": "_DSC2092-2.jpg",
-      "width": 1050,
-      "height": 1350,
-      "aspect": 0.7778,
-      "heightIn": 16,
-      "widthIn": 12.44,
-      "measured": false,
-      "title": "",
-      "year": null
-    },
-    {
-      "id": "_DSC3062-new",
-      "file": "_DSC3062-new.jpg",
+      "id": "_DSC3062",
+      "file": "_DSC3062.jpg",
       "width": 1080,
       "height": 1441,
       "aspect": 0.7495,
@@ -71,31 +123,107 @@
       "widthIn": 35.98,
       "measured": true,
       "title": "ਚਿੰਤਾ / ਚਿੰਤਨ",
-      "year": 2023
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": "Have you ever felt blind in a garden, forgotten how to smell and hear the grandness of co-existing abundance? What did you choose over all that so you could feel a sense of belonging? Did you give structure only to that dark thought? Some interactions with my closest people made me question if too much optimism leads to a kind of separation, triggering a chain reaction of doubts. But the truth is, nothing will slow time down. We might as well dive into the chaos, and we'll feel that the abundance will bring belonging to us."
     },
     {
-      "id": "_DSC3062",
-      "file": "_DSC3062.jpg",
-      "width": 2611,
-      "height": 3264,
+      "id": "_DSC3085-2",
+      "file": "_DSC3085-2.jpg",
+      "width": 2849,
+      "height": 3561,
+      "aspect": 0.8001,
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
+      "title": "With a form after all",
+      "year": 2022,
+      "medium": "Oil on Canvas",
+      "description": "Oil on a found wood panel, 2022"
+    },
+    {
+      "id": "_DSC3086",
+      "file": "_DSC3086.jpg",
+      "width": 2824,
+      "height": 3530,
+      "aspect": 0.8,
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
+      "title": "Four days in Rome III",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": "Four days in Rome"
+    },
+    {
+      "id": "_DSC3098",
+      "file": "_DSC3098.jpg",
+      "width": 2386,
+      "height": 2983,
       "aspect": 0.7999,
-      "heightIn": 16,
-      "widthIn": 12.8,
-      "measured": false,
-      "title": "",
-      "year": null
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
+      "title": "Four days in Rome IV",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": "Four days in Rome"
     },
     {
-      "id": "_DSC3085",
-      "file": "_DSC3085.jpg",
+      "id": "_DSC3101",
+      "file": "_DSC3101.jpg",
+      "width": 3886,
+      "height": 4858,
+      "aspect": 0.7999,
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
+      "title": "Four days in Rome V",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": "Four days in Rome"
+    },
+    {
+      "id": "_DSC3118",
+      "file": "_DSC3118.jpg",
       "width": 1536,
       "height": 1920,
       "aspect": 0.8,
-      "heightIn": 16,
-      "widthIn": 12.8,
-      "measured": false,
-      "title": "With a form after all",
-      "year": 2022
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
+      "title": "Four days in Paris I",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": "Four days in Paris, the city of the pretty, had me thinking....it is way too hot for September"
+    },
+    {
+      "id": "_DSC3123-2",
+      "file": "_DSC3123-2.jpg",
+      "width": 1536,
+      "height": 1920,
+      "aspect": 0.8,
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
+      "title": "Four days in Paris II",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": "Four days in Paris, the city of the pretty, had me thinking....it is way too hot for September"
+    },
+    {
+      "id": "_DSC3127",
+      "file": "_DSC3127.jpg",
+      "width": 1536,
+      "height": 1920,
+      "aspect": 0.8,
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
+      "title": "Four days in Paris III",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": "Four days in Paris, the city of the pretty, had me thinking....it is way too hot for September"
     },
     {
       "id": "_DSC3363_2",
@@ -103,11 +231,13 @@
       "width": 2312,
       "height": 2851,
       "aspect": 0.8109,
-      "heightIn": 16,
-      "widthIn": 12.97,
-      "measured": false,
-      "title": "",
-      "year": null
+      "heightIn": 30,
+      "widthIn": 24.33,
+      "measured": true,
+      "title": "Yellow Field",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC5167",
@@ -115,11 +245,27 @@
       "width": 1536,
       "height": 1920,
       "aspect": 0.8,
-      "heightIn": 16,
-      "widthIn": 12.8,
-      "measured": false,
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
       "title": "I hit a wall while deciding between Red and White",
-      "year": 2024
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": "I hit a wall while deciding between Red and White at a restaurant and started thinking about why I was mad at my heart."
+    },
+    {
+      "id": "_DSC5196 Rose and weekday beachday",
+      "file": "_DSC5196 Rose and weekday beachday.jpg",
+      "width": 2376,
+      "height": 2376,
+      "aspect": 1,
+      "heightIn": 16,
+      "widthIn": 16,
+      "measured": true,
+      "title": "Rosé and a Weekday Beach day",
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC5198_1",
@@ -127,11 +273,13 @@
       "width": 1080,
       "height": 1350,
       "aspect": 0.8,
-      "heightIn": 16,
-      "widthIn": 12.8,
-      "measured": false,
+      "heightIn": 20,
+      "widthIn": 16,
+      "measured": true,
       "title": "Evidently Invisible",
-      "year": 2024
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC5199",
@@ -141,9 +289,11 @@
       "aspect": 1,
       "heightIn": 16,
       "widthIn": 16,
-      "measured": false,
+      "measured": true,
       "title": "The door, Ring the Bell",
-      "year": 2024
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC5207_1",
@@ -151,11 +301,13 @@
       "width": 1080,
       "height": 1350,
       "aspect": 0.8,
-      "heightIn": 24,
-      "widthIn": 19.2,
+      "heightIn": 20,
+      "widthIn": 16,
       "measured": true,
-      "title": "Room for Mystery",
-      "year": 2024
+      "title": "Sad Painter Eyes",
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": "Sad painter eyes because.. some flowers are dying, some flowers are dead."
     },
     {
       "id": "_DSC6711Large",
@@ -163,11 +315,13 @@
       "width": 4021,
       "height": 2262,
       "aspect": 1.7776,
-      "heightIn": 9,
-      "widthIn": 16,
-      "measured": false,
+      "heightIn": 28,
+      "widthIn": 49.77,
+      "measured": true,
       "title": "Looking Back",
-      "year": 2024
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": "Painting 1 from The Greece Residency, January 2024. This painting explores the concept of time, how our journey began at a specific point, bringing with it everything we've been, into the present, shaping a future that remains undefined. Each of us carries a layer of mystery, unknown even to ourselves, drawing the universe toward us as it seeks harmony with us. The residency centered on the significance of myth and the role of mystery in both the physical and psychological realms. Vikram discovered a world where the continuity of myth relies on human belief and faith and the influence and power we hold over time that has passed."
     },
     {
       "id": "_DSC6740Large",
@@ -178,8 +332,24 @@
       "heightIn": 30,
       "widthIn": 26.45,
       "measured": true,
+      "title": "Kinetics of the Still",
+      "year": 2023,
+      "medium": "Oil on Canvas",
+      "description": ""
+    },
+    {
+      "id": "_DSC7619",
+      "file": "_DSC7619.jpg",
+      "width": 3433,
+      "height": 3063,
+      "aspect": 1.1208,
+      "heightIn": 28,
+      "widthIn": 31.38,
+      "measured": true,
       "title": "Summer Seep",
-      "year": 2024
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": "ਸਦ ਜੀਵਨੁ ਭਲੇ ਕਹਾਹੀ ॥\nਮੂਏ ਬਿਨੁ ਜੀਵਨੁ ਨਾਹੀ ॥\n-Bhagat Kabir ji\n'People define a good life in many ways, but without dying (living humbly, embracing the present, staying in hukam), there is no life.'\n\n3) ਧਰਤੀ ਹੇਠਲਾ ਬੌਲਦ (Dharti hethla Bauld) Kulwant Singh Virk"
     },
     {
       "id": "_DSC7622",
@@ -187,11 +357,27 @@
       "width": 4710,
       "height": 3536,
       "aspect": 1.332,
-      "heightIn": 12.01,
-      "widthIn": 16,
-      "measured": false,
-      "title": "",
-      "year": null
+      "heightIn": 48,
+      "widthIn": 63.94,
+      "measured": true,
+      "title": "A Room for Sunsets",
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": "Sunsets are easy, Hide the Sun behind your thumb."
+    },
+    {
+      "id": "_DSC7648",
+      "file": "_DSC7648.jpg",
+      "width": 2478,
+      "height": 3238,
+      "aspect": 0.7653,
+      "heightIn": 24,
+      "widthIn": 18.37,
+      "measured": true,
+      "title": "Room for Mystery",
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": "During my residency in January 2024 in Athens, immersed in the myths of the afterlife and the sacred rites of Elefsina, I set out to paint the erosion of time. But in the quiet of a museum hall, I found something else: a vessel, ancient, broken then unbroken, standing watch over memory and loss. 'The unseen road is longer than memory.'"
     },
     {
       "id": "_DSC8434small",
@@ -203,7 +389,9 @@
       "widthIn": 15.94,
       "measured": true,
       "title": "wore white, found mud",
-      "year": 2025
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC8445",
@@ -215,7 +403,9 @@
       "widthIn": 27.7,
       "measured": true,
       "title": "March 1989",
-      "year": 2024
+      "year": 2024,
+      "medium": "Oil on Canvas",
+      "description": "Punjab 2024"
     },
     {
       "id": "_DSC8504",
@@ -227,7 +417,9 @@
       "widthIn": 15.59,
       "measured": true,
       "title": "A Nice Blue Room",
-      "year": 2025
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC8505",
@@ -239,19 +431,23 @@
       "widthIn": 15.68,
       "measured": true,
       "title": "Extra",
-      "year": 2025
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": "oil & canvas, water & body"
     },
     {
       "id": "_DSC8510",
       "file": "_DSC8510.jpg",
-      "width": 2980,
-      "height": 3052,
-      "aspect": 0.9764,
+      "width": 999,
+      "height": 1024,
+      "aspect": 0.9756,
       "heightIn": 16,
-      "widthIn": 15.62,
-      "measured": false,
+      "widthIn": 15.61,
+      "measured": true,
       "title": "Summer",
-      "year": 2025
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": "1 Oil painting a day"
     },
     {
       "id": "_DSC8944",
@@ -263,7 +459,93 @@
       "widthIn": 16.28,
       "measured": true,
       "title": "AM fire after a rainy night",
-      "year": 2025
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
+    },
+    {
+      "id": "_DSC9353",
+      "file": "_DSC9353.jpg",
+      "width": 971,
+      "height": 1024,
+      "aspect": 0.9482,
+      "heightIn": 16,
+      "widthIn": 15.17,
+      "measured": true,
+      "title": "Sila and the Water that never freezes",
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": "In this painting, I sought to bridge the physical intensity of an Arctic seal hunt with the metaphysical presence of Sila, the spirit of the air and life force. Inspired by a journey to Iqaluit and the stories shared by a close friend, the work captures the surreal brilliance of a day moon over the polynia (the water that never freezes). The stark contrast between the deep blue water and the vibrant red of seal blood on the ice serves as a grounding point for the ethereal spirals that dance through the composition. These spirals are not just shapes; they are Sila herself, weaving together my friend's life journey, the memory of our shared expedition, and the enduring, breathing energy that animates the frozen landscape."
+    },
+    {
+      "id": "_DSC9388",
+      "file": "_DSC9388.jpg",
+      "width": 2484,
+      "height": 2842,
+      "aspect": 0.874,
+      "heightIn": 14,
+      "widthIn": 12.24,
+      "measured": true,
+      "title": "Mind Your Form",
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
+    },
+    {
+      "id": "_DSC9389",
+      "file": "_DSC9389.jpg",
+      "width": 3019,
+      "height": 2827,
+      "aspect": 1.0679,
+      "heightIn": 13,
+      "widthIn": 13.88,
+      "measured": true,
+      "title": "Leaving Shape",
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
+    },
+    {
+      "id": "_DSC9402_2",
+      "file": "_DSC9402_2.jpg",
+      "width": 3202,
+      "height": 2180,
+      "aspect": 1.4688,
+      "heightIn": 10.89,
+      "widthIn": 16,
+      "measured": false,
+      "title": "",
+      "year": null,
+      "medium": "Oil on Canvas",
+      "description": ""
+    },
+    {
+      "id": "_DSC9413",
+      "file": "_DSC9413.jpg",
+      "width": 2821,
+      "height": 4429,
+      "aspect": 0.6369,
+      "heightIn": 22,
+      "widthIn": 14.01,
+      "measured": true,
+      "title": "Dhanna's Stone",
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": "Inspired by Bhagat Dhanna Ji, the farmer whose faith turned a stone into divine presence. In the film Bhagat Dhanna Jatt, the priest's ritual is empty, yet Dhanna's belief makes the stone sacred. His sincerity carries more weight than ceremony. The clip is from the movie Bhagat Dhanna Jatt(1974). I've been thinking about how far abstraction can stretch before we reach back for form. What would a shape mean if we couldn't see? What is the form of a feeling, or the outline of something invisible? We choose form because it comforts us, it helps us speak, to touch, to be seen. Rituals, forms and the shapes we create aren't truth on their own; they're subsets of presence, gestures reaching toward what's already here."
+    },
+    {
+      "id": "_DSC9450",
+      "file": "_DSC9450.jpg",
+      "width": 3039,
+      "height": 3100,
+      "aspect": 0.9803,
+      "heightIn": 16,
+      "widthIn": 15.68,
+      "measured": false,
+      "title": "",
+      "year": null,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC9451",
@@ -275,7 +557,23 @@
       "widthIn": 24.95,
       "measured": true,
       "title": "Anti-Morning-Gravity",
-      "year": 2025
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
+    },
+    {
+      "id": "_DSC9839",
+      "file": "_DSC9839.jpg",
+      "width": 2658,
+      "height": 2140,
+      "aspect": 1.2421,
+      "heightIn": 12,
+      "widthIn": 14.91,
+      "measured": true,
+      "title": "Depth of a Mirror",
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC9851",
@@ -283,11 +581,41 @@
       "width": 1960,
       "height": 3857,
       "aspect": 0.5082,
-      "heightIn": 13,
-      "widthIn": 6.61,
+      "heightIn": 16,
+      "widthIn": 8.13,
+      "measured": false,
+      "title": "",
+      "year": null,
+      "medium": "Oil on Canvas",
+      "description": ""
+    },
+    {
+      "id": "_DSC9852-2",
+      "file": "_DSC9852-2.jpg",
+      "width": 1873,
+      "height": 3510,
+      "aspect": 0.5336,
+      "heightIn": 24,
+      "widthIn": 12.81,
       "measured": true,
-      "title": "Leaving Shape",
-      "year": 2025
+      "title": "El corazón del movimiento",
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": "In the Mexica worldview, to possess a heart (Yollotl) is to be in a state of constant movement (Ollin). There is an ancient vibration in the teyolia-the vital life force of consciousness. This narrative traces back to the very origin of Mexico City: the heart of the warrior Copil cast into the waters of Lake Texcoco, germinating into a sacred nopal cactus where an eagle descended to mark the center of the world."
+    },
+    {
+      "id": "_DSC9883",
+      "file": "_DSC9883.jpg",
+      "width": 2010,
+      "height": 3963,
+      "aspect": 0.5072,
+      "heightIn": 16,
+      "widthIn": 8.12,
+      "measured": false,
+      "title": "",
+      "year": null,
+      "medium": "Oil on Canvas",
+      "description": ""
     },
     {
       "id": "_DSC9978",
@@ -299,7 +627,51 @@
       "widthIn": 13.23,
       "measured": true,
       "title": "ਨਰਮ ਅੰਦਰੂਨ / Narm Androon",
-      "year": 2025
+      "year": 2025,
+      "medium": "Oil on Canvas",
+      "description": "The conclusion of this series served as a passage into the shapeless. It gives character to the moments where we stop fixating on the 'forms' of what we feel and instead embrace the soft, undefined nature of the soul. To step 'indoors' is to move past the threshold of ceremony or performance and into a state of pure presence. Here, the weight of the stone and the sincerity of the heart become one; there is no need for a seen outline when the invisible is felt so clearly."
+    },
+    {
+      "id": "not home yet",
+      "file": "not home yet.jpg",
+      "width": 2284,
+      "height": 2878,
+      "aspect": 0.7936,
+      "heightIn": 16,
+      "widthIn": 12.7,
+      "measured": true,
+      "title": "Not Home Yet",
+      "year": 2022,
+      "medium": "Acrylic on handmade paper",
+      "description": ""
+    },
+    {
+      "id": "shiv kumar batalvi",
+      "file": "shiv kumar batalvi.jpg",
+      "width": 870,
+      "height": 1006,
+      "aspect": 0.8648,
+      "heightIn": 16,
+      "widthIn": 13.84,
+      "measured": true,
+      "title": "Shiv Kumar Batalvi",
+      "year": 2025,
+      "medium": "Oil on canvas",
+      "description": "Cool head"
+    },
+    {
+      "id": "where time loses its name",
+      "file": "where time loses its name.jpg",
+      "width": 1170,
+      "height": 1430,
+      "aspect": 0.8182,
+      "heightIn": 16,
+      "widthIn": 13.09,
+      "measured": true,
+      "title": "Where Time Loses Its Name",
+      "year": 2025,
+      "medium": "Acrylic on handmade paper",
+      "description": ""
     }
   ]
 }

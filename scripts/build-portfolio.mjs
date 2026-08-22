@@ -103,7 +103,9 @@ for (const file of sources) {
         widthIn: Number((heightIn * aspect).toFixed(2)),
         measured: Boolean(measured),             // false = assumed, not from a post
         title: detail.title || '',
-        year: detail.year || null
+        year: detail.year || null,
+        medium: detail.medium || 'Oil on Canvas',
+        description: detail.description || ''
     });
 
     const kb = String(Math.round(bytes / 1024)).padStart(5);

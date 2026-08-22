@@ -7,41 +7,50 @@ import { panelSizeFor } from './paintingDoor.js';
 // neighbours while leaving gaps around the tall portraits, so each painting's arc
 // is proportional to the width it actually occupies.
 
-export const RING_RADII = [15, 24, 33];
+export const MAX_PAINTINGS_PER_RING = 5;
+export const BASE_RADIUS = 15;
+export const RING_SPACING = 8;
 
-// More art on the near rings, where it reads; the distant ring stays sparse.
-export function distributeAcrossRings(count, ringCount = RING_RADII.length) {
+export function getRingRadii(paintingCount, maxPerRing = MAX_PAINTINGS_PER_RING) {
+    const ringCount = Math.max(1, Math.ceil(paintingCount / maxPerRing));
+    return Array.from({ length: ringCount }, (_, i) => BASE_RADIUS + i * RING_SPACING);
+}
+
+// Exactly max 5 paintings per ring (5, 5, 5, ...)
+export function distributeAcrossRings(count, maxPerRing = MAX_PAINTINGS_PER_RING) {
+    const ringCount = Math.max(1, Math.ceil(count / maxPerRing));
     const per = new Array(ringCount).fill(0);
-    // Weight inner rings more heavily: 3 : 2.5 : 2 for three rings.
-    const weights = Array.from({ length: ringCount }, (_, i) => 3 - i * 0.5);
-    const total = weights.reduce((a, b) => a + b, 0);
 
-    let assigned = 0;
+    let remaining = count;
     for (let i = 0; i < ringCount; i++) {
-        per[i] = Math.floor((count * weights[i]) / total);
-        assigned += per[i];
+        const take = Math.min(remaining, maxPerRing);
+        per[i] = take;
+        remaining -= take;
     }
-    // Hand any remainder to the innermost rings.
-    for (let i = 0; assigned < count; i = (i + 1) % ringCount) { per[i]++; assigned++; }
     return per;
 }
 
-// Newest first, so the innermost ring holds the most recent work and each ring
-// outward steps further back in time. Undated paintings sort last, to the outside.
+// Newest first, so the innermost ring holds the most recent work (Flowers Unnamed is the latest).
 export function byYearNewestFirst(paintings) {
-    return [...paintings].sort((a, b) => (b.year || 0) - (a.year || 0));
+    return [...paintings].sort((a, b) => {
+        if (a.id === '_DSC0284') return -1;
+        if (b.id === '_DSC0284') return 1;
+        return (b.year || 0) - (a.year || 0);
+    });
 }
 
-// Returns [{ painting, ring, radius, angle, width }] with no two panels overlapping.
+// Returns [{ painting, ring, radius, angle, width }] with max 5 paintings per ring.
 // `paintings` is consumed in order, so sort before calling.
-export function layoutPaintings(paintings, radii = RING_RADII) {
-    const perRing = distributeAcrossRings(paintings.length, radii.length);
+export function layoutPaintings(paintings, maxPerRing = MAX_PAINTINGS_PER_RING) {
+    const perRing = distributeAcrossRings(paintings.length, maxPerRing);
+    const radii = getRingRadii(paintings.length, maxPerRing);
     const placed = [];
     let index = 0;
 
     radii.forEach((radius, ring) => {
-        const slice = paintings.slice(index, index + perRing[ring]);
-        index += perRing[ring];
+        const count = perRing[ring];
+        const slice = paintings.slice(index, index + count);
+        index += count;
         if (!slice.length) return;
 
         const widths = slice.map(p => panelSizeFor(p).width);
@@ -53,8 +62,8 @@ export function layoutPaintings(paintings, radii = RING_RADII) {
         // Whatever arc is left over becomes equal gaps between neighbours.
         const gap = Math.max((Math.PI * 2 - used) / slice.length, 0);
 
-        // Odd rings start half a gap around, so nothing lines up radially.
-        let cursor = (ring % 2 === 1) ? gap / 2 : 0;
+        // Golden-ratio rotation stagger across concentric rings to prevent radial line-up
+        let cursor = (ring * 0.618033988749895 * Math.PI * 2) % (gap || 1);
 
         slice.forEach((painting, i) => {
             const angle = cursor + spans[i] / 2;      // centre of this panel's arc

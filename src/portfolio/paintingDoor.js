@@ -18,7 +18,12 @@ const GROUND_SINK = 0.02;   // frame bottoms sit just below the ground plane
 // teardown only has to leave these two objects alone.
 export const unitBox = new THREE.BoxGeometry(1, 1, 1);
 export const unitPlane = new THREE.PlaneGeometry(1, 1);
-export const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5, metalness: 0.5 });
+export const frameMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2e3238,
+    roughness: 0.32,
+    metalness: 0.9,
+    envMapIntensity: 1.4
+});
 
 // Panel size in world metres for a painting, from its real canvas measurements.
 export function panelSizeFor(painting) {
@@ -31,14 +36,16 @@ export function createPaintingDoor(group, painting) {
     const { width, height } = panelSizeFor(painting);
     const halfW = width / 2;
     const postX = halfW + FRAME_THICK / 2;
-    const postH = height + FRAME_THICK * 2;
+    const baseTopY = 0.10; // Top of the sunk base bar
+    const lintelCenterY = baseTopY + height + FRAME_THICK / 2;
+    const postH = baseTopY + height + FRAME_THICK + GROUND_SINK;
+    const postCenterY = (baseTopY + height + FRAME_THICK - GROUND_SINK) / 2;
     const spanW = width + FRAME_THICK * 2;
-    const centreY = postH / 2 - GROUND_SINK;
 
     const post = (x) => {
         const m = new THREE.Mesh(unitBox, frameMaterial);
         m.scale.set(FRAME_THICK, postH, FRAME_THICK);
-        m.position.set(x, centreY, 0);
+        m.position.set(x, postCenterY, 0);
         m.castShadow = true;
         m.name = 'Frame';
         group.add(m);
@@ -48,13 +55,13 @@ export function createPaintingDoor(group, painting) {
 
     const lintel = new THREE.Mesh(unitBox, frameMaterial);
     lintel.scale.set(spanW, FRAME_THICK, FRAME_THICK);
-    lintel.position.set(0, postH - GROUND_SINK - FRAME_THICK / 2, 0);
+    lintel.position.set(0, lintelCenterY, 0);
     lintel.castShadow = true; lintel.name = 'Frame';
     group.add(lintel);
 
     const base = new THREE.Mesh(unitBox, frameMaterial);
     base.scale.set(spanW, 0.12, FRAME_THICK);
-    base.position.set(0, 0.04, 0);   // bottom at -0.02, sunk for shadow contact
+    base.position.set(0, 0.04, 0);   // bottom at -0.02, top at 0.10
     base.castShadow = true; base.receiveShadow = true; base.name = 'Frame';
     group.add(base);
 
@@ -68,7 +75,7 @@ export function createPaintingDoor(group, painting) {
     });
     const panel = new THREE.Mesh(unitPlane, panelMaterial);
     panel.scale.set(width, height, 1);
-    panel.position.set(0, height / 2 - GROUND_SINK + FRAME_THICK / 2, 0);
+    panel.position.set(0, baseTopY + height / 2, 0);
     panel.castShadow = true;
     panel.name = 'Painting';
     group.add(panel);

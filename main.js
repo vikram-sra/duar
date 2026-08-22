@@ -12,11 +12,12 @@ import {
     createPaintingDoor, loadPaintingTexture, focusDistanceFor,
     unitBox, unitPlane, frameMaterial
 } from './src/portfolio/paintingDoor.js';
+import { createCeramicSculpture } from './src/portfolio/sculpture.js';
 
 const CONFIG = {
     "scene": {
-        "fog": { "color": "#2c3e50", "near": 20, "far": 90 },
-        "camera": { "fov": 50, "startPosition": [0, 8, 20] }
+        "fog": { "color": "#233242", "near": 20, "far": 90 },
+        "camera": { "fov": 50, "startPosition": [0, 3.0, 28.5] }
     },
     "doors": [
         { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: "/models/door_rustic.glb", position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
@@ -44,13 +45,14 @@ class DuarApp {
         this._orbitRadius = null; // When set, render loop enforces this distance from controls.target
         this.hoveredDoor = null;  // Door currently under the cursor (drives label display)
         this.elapsed = 0;         // Real seconds since start (delta-time accumulator)
-        this.viewMode = 'default'; // 'default' doors, or the 'portfolio' of paintings
+        this.viewMode = 'portfolio'; // Default view is now paintings gallery ('portfolio')
         this._switching = false;
         this.particleSystems = [];
         this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Ground plane
         this.loadingManager = new THREE.LoadingManager();
         this.setupLoadingManager();
         this._bindReticle();
+        this._bindPaintingPopup();
 
         this.init();
         // Fallback to reveal scene after 2.5s if loading hangs
@@ -85,6 +87,31 @@ class DuarApp {
                 if (!this.isTraveling) this.resetScene();
             });
         }
+    }
+
+    // Bind title pill and details popup for focused painting.
+    _bindPaintingPopup() {
+        const popup = document.getElementById('painting-popup');
+        const titleBtn = document.getElementById('painting-title-btn');
+        const card = document.getElementById('painting-popup-card');
+        if (!popup || !titleBtn) return;
+
+        titleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            popup.classList.toggle('open');
+        });
+
+        if (card) {
+            ['pointerdown', 'pointerup', 'click'].forEach(ev => {
+                card.addEventListener(ev, (e) => e.stopPropagation());
+            });
+        }
+
+        window.addEventListener('click', (e) => {
+            if (popup.classList.contains('open') && !popup.contains(e.target)) {
+                popup.classList.remove('open');
+            }
+        });
     }
 
     // Swap the "Enter" caption for a status message, then restore it.
@@ -141,14 +168,45 @@ class DuarApp {
             { opacity: 0, scale: 0 },
             { opacity: 1, scale: 1, duration: 0.5, ease: 'back.out(1.7)', overwrite: true }
         );
+
+        // Show persistent title pill at the top in focus mode
+        if (art && this.activeDoor?.data) {
+            const p = this.activeDoor.data;
+            const popup = document.getElementById('painting-popup');
+            const titleSpan = popup?.querySelector('.popup-title-text');
+            const metaDiv = popup?.querySelector('.popup-card-meta');
+            const descDiv = popup?.querySelector('.popup-card-desc');
+
+            if (popup && titleSpan) {
+                titleSpan.textContent = p.title || 'Untitled';
+
+                // Verbatim dimensions, year and medium provided
+                const metaParts = [];
+                if (p.year) metaParts.push(`${p.year}`);
+                if (p.widthIn && p.heightIn) metaParts.push(`${p.widthIn}×${p.heightIn} in`);
+                if (p.medium) metaParts.push(p.medium);
+
+                if (metaDiv) metaDiv.textContent = metaParts.join('  ·  ');
+                if (descDiv) descDiv.textContent = p.description || '';
+
+                popup.classList.remove('open');
+                popup.classList.add('visible');
+            }
+        }
     }
 
     _hideReticle() {
         const reticle = document.getElementById('reticle');
         if (!reticle) return;
-        // Drop the portfolio-specific styling as well as visibility, so switching
-        // back to the doors can't inherit art-mode from the gallery.
+        // Drop the portfolio-specific styling as well as visibility
         document.querySelector('.reticle-back')?.classList.remove('visible', 'art');
+
+        // Hide focus title pill and dropdown card
+        const popup = document.getElementById('painting-popup');
+        if (popup) {
+            popup.classList.remove('visible', 'open');
+        }
+
         gsap.to(reticle, {
             opacity: 0, scale: 0, duration: 0.3, ease: 'power2.in', overwrite: true,
             onComplete: () => reticle.classList.remove('visible', 'art-mode')
@@ -179,9 +237,10 @@ class DuarApp {
         this.doors.forEach(d => {
             const el = d.labelEl;
             if (!el) return;
-            const show = (d === this.hoveredDoor || d.isOpen) && !this.isTraveling;
+            const show = (d === this.hoveredDoor && !this.activeDoor) && !this.isTraveling;
             if (!show) { if (el.style.opacity !== '0') el.style.opacity = '0'; return; }
-            v.set(d.group.position.x, d.group.position.y + 3.7, d.group.position.z).project(this.camera);
+            const labelY = d.isPainting ? (d.centreY + (d.height || 4) / 2 + 0.3) : 3.7;
+            v.set(d.group.position.x, d.group.position.y + labelY, d.group.position.z).project(this.camera);
             if (v.z > 1) { el.style.opacity = '0'; return; } // behind the camera
             el.style.left = (v.x * halfW + halfW) + 'px';
             el.style.top = (-v.y * halfH + halfH) + 'px';
@@ -206,19 +265,25 @@ class DuarApp {
                 }
             });
         }
-        if (this.rock) this.rock.visible = true;
+        if (this.viewMode === 'portfolio') {
+            if (this.sculpture) this.sculpture.visible = true;
+            if (this.rock) this.rock.visible = false;
+        } else {
+            if (this.rock) this.rock.visible = true;
+            if (this.sculpture) this.sculpture.visible = false;
+        }
     }
 
     init() {
         this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 2500);
-        this.camera.position.set(0, 1.6, 25);
+        this.camera.position.set(0, 3.0, 28.5);
         this.camera.lookAt(0, 1.6, 0);
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance", alpha: false });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        this.renderer.toneMappingExposure = 1.8;
+        this.renderer.toneMappingExposure = 1.7;
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Stable, soft shadows
@@ -229,8 +294,8 @@ class DuarApp {
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         const bloomRes = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
-        this.bloomPass = new UnrealBloomPass(bloomRes, 1.2, 0.4, 0.2); // Increased strength, lower threshold for glow
-        this._bloomDefaults = { strength: 1.2, threshold: 0.2 };
+        this.bloomPass = new UnrealBloomPass(bloomRes, 1.1, 0.4, 0.22);
+        this._bloomDefaults = { strength: 1.1, threshold: 0.22 };
         this.composer.addPass(this.bloomPass);
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -248,15 +313,23 @@ class DuarApp {
 
         this.setupLighting();
         this.setupEnvironment();
-        this.setupDoors();
+        if (this.viewMode === 'portfolio') {
+            this.buildPortfolioDoors();
+            this.bloomPass.threshold = 0.95;
+            this.bloomPass.strength = 0.55;
+        } else {
+            this.setupDoors();
+        }
         this.setupDustMotes();
 
         window.addEventListener('resize', () => this.onResize(), { passive: true });
         window.addEventListener('mousemove', (e) => this.onMouseMove(e), { passive: true });
+        window.addEventListener('wheel', () => this.dismissIntro(), { passive: true });
         window.addEventListener('contextmenu', (e) => e.preventDefault());
 
         let startX = 0; let startY = 0;
         window.addEventListener('pointerdown', (e) => {
+            this.dismissIntro();
             startX = e.clientX; startY = e.clientY;
             // Touch has no hover state — raycast on contact so a door's label appears the
             // instant you touch it, same moment a mouse user would see it on hover.
@@ -399,7 +472,7 @@ class DuarApp {
 
         const slider = document.createElement('input');
         slider.type = 'range'; slider.className = 'chrome-slider';
-        slider.min = '0'; slider.max = '0.5'; slider.step = '0.001'; slider.value = '0.02';
+        slider.min = '0'; slider.max = '0.04'; slider.step = '0.0005'; slider.value = '0.02';
         slider.oninput = (e) => { this.daySpeed = parseFloat(e.target.value); this.resetUIHideTimer(); };
         ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
 
@@ -408,7 +481,8 @@ class DuarApp {
             random: `<svg viewBox="0 0 24 24"><path d="M4 4h4v4H4zm12 0h4v4h-4zM4 16h4v4H4zm12 0h4v4h-4z"/></svg>`, // Pixel/Grid
             day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 1v1.5M12 21.5V23M1 12h1.5M21.5 12H23"/></svg>`, // Minimalist Sun
             night: `<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`, // Minimal Crescent
-            rotate: `<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>` // Loop Icon
+            rotate: `<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>`, // Loop Icon
+            instagram: `<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>`
         };
 
         const createBtn = (svg, onClick, label = '') => {
@@ -433,22 +507,16 @@ class DuarApp {
             return btn;
         };
 
-        const homeBtn = createBtn(icons.home, () => this.resetScene(), 'Home');
+        const homeBtn = createBtn(icons.home, () => this.resetScene(true), 'Home');
 
         const randBtn = createBtn(icons.random, () => {
             if (this.doors.length === 0 || this.isTraveling) return;
             const door = this.doors[Math.floor(Math.random() * this.doors.length)];
-            const angle = Math.atan2(door.group.position.x, door.group.position.z);
-            const dist = 25;
-            // Arrive first, then open the door — instead of both happening at once.
-            gsap.to(this.camera.position, {
-                x: Math.sin(angle) * dist, y: 1.6, z: Math.cos(angle) * dist,
-                duration: 1.5, ease: "power2.inOut",
-                onUpdate: () => this.camera.lookAt(0, 1.6, 0),
-                onComplete: () => {
-                    if (!door.isOpen) this.toggleDoor(door);
-                }
-            });
+            if (door.isPainting) {
+                this.focusPainting(door);
+            } else {
+                if (!door.isOpen) this.toggleDoor(door);
+            }
         }, 'Discover');
 
         const sunBtn = createBtn(icons.day, () => { }, 'Day'); // Click handled by wrapper
@@ -534,8 +602,8 @@ class DuarApp {
 
         // Sun: Hold to max speed day, Tap for Noon
         addLongPressHandler(sunBtn, (t) => {
-            if (this.daySpeed < 0.01) this.daySpeed = 0.01;
-            this.daySpeed = Math.min(0.5, this.daySpeed * 1.1); // Accelerate
+            if (this.daySpeed < 0.005) this.daySpeed = 0.005;
+            this.daySpeed = Math.min(0.04, this.daySpeed * 1.1); // Accelerate
             slider.value = this.daySpeed;
         }, () => {
             this.sunAngle = Math.PI / 2;
@@ -550,8 +618,8 @@ class DuarApp {
 
         // Moon: Hold to max speed night, Tap for Midnight
         addLongPressHandler(moonBtn, (t) => {
-            if (this.daySpeed < 0.01) this.daySpeed = 0.01;
-            this.daySpeed = Math.min(0.5, this.daySpeed * 1.1); // Accelerate
+            if (this.daySpeed < 0.005) this.daySpeed = 0.005;
+            this.daySpeed = Math.min(0.04, this.daySpeed * 1.1); // Accelerate
             slider.value = this.daySpeed;
         }, () => {
             this.sunAngle = 3 * Math.PI / 2;
@@ -559,7 +627,14 @@ class DuarApp {
             slider.value = 0;
         });
 
-        wrapper.append(homeBtn, randBtn, sunBtn, slider, moonBtn, rotateBtn);
+        // Instagram button: links to @vaveism (shown only in portfolio mode)
+        const instaBtn = createBtn(icons.instagram, () => {
+            window.open('https://instagram.com/vaveism', '_blank', 'noopener,noreferrer');
+        }, '@vaveism');
+        this.instaBtn = instaBtn;
+        instaBtn.style.display = this.viewMode === 'portfolio' ? 'inline-flex' : 'none';
+
+        wrapper.append(homeBtn, randBtn, sunBtn, slider, moonBtn, rotateBtn, instaBtn);
         container.appendChild(wrapper);
         document.body.appendChild(container);
 
@@ -670,9 +745,19 @@ class DuarApp {
             let interactedWithObject = false;
 
             if (hits.length > 0) {
-                // Find if we hit any door-related object
+                const isCenterObj = (obj) => {
+                    if (obj === this.rock) return true;
+                    let p = obj;
+                    while (p) {
+                        if (p === this.sculpture) return true;
+                        p = p.parent;
+                    }
+                    return false;
+                };
+
+                // Find if we hit any center monolith/sculpture or door-related object
                 const hit = hits.find(h => {
-                    if (h.object === this.rock) return true;
+                    if (isCenterObj(h.object)) return true;
                     let obj = h.object;
                     while (obj) {
                         if (this.doors.some(d => d.group === obj)) return true;
@@ -683,10 +768,18 @@ class DuarApp {
 
                 if (hit) {
                     interactedWithObject = true;
-                    if (hit.object === this.rock) {
+                    if (isCenterObj(hit.object)) {
                         this.controls.autoRotate = false;
                         if (this.rotateBtn) this.rotateBtn.style.color = 'rgba(255,255,255,0.3)';
-                        this.resetScene();
+                        if (!this._switching) {
+                            const nextMode = this.viewMode === 'default' ? 'portfolio' : 'default';
+                            this.switchView(nextMode);
+                            if (this.viewToggle) {
+                                const toArt = nextMode === 'default';
+                                this.viewToggle.textContent = toArt ? 'Paintings' : 'Doors';
+                                this.viewToggle.setAttribute('aria-label', toArt ? 'Switch to paintings' : 'Switch to doors');
+                            }
+                        }
                         return;
                     }
 
@@ -701,8 +794,12 @@ class DuarApp {
 
                     if (door) {
                         if (door.isPainting) {
-                            // Paintings don't open — clicking one frames it.
-                            this.focusPainting(door);
+                            if (this.activeDoor === door && !this.isTraveling) {
+                                const popup = document.getElementById('painting-popup');
+                                if (popup) popup.classList.toggle('open');
+                            } else {
+                                this.focusPainting(door);
+                            }
                         } else if (door.isOpen) {
                             // Clicking inside an already-open door is an attempt to go
                             // through it, so it refuses like the Enter dot does. The cross
@@ -715,9 +812,14 @@ class DuarApp {
                 }
             }
 
-            // Tapping anywhere else toggles UI
+            // Tapping anywhere else dismisses open popup or toggles UI
             if (!interactedWithObject) {
-                this.setUIVisibility(!this.uiVisible);
+                const popup = document.getElementById('painting-popup');
+                if (popup && popup.classList.contains('open')) {
+                    popup.classList.remove('open');
+                } else {
+                    this.setUIVisibility(!this.uiVisible);
+                }
             }
         } catch (e) {
             console.error("Error in onClick:", e);
@@ -908,8 +1010,20 @@ class DuarApp {
         let hoveredDoor = null;
         
         if (hits.length > 0) {
+            const isCenterObj = (obj) => {
+                if (obj === this.rock) return true;
+                if (this.sculpture) {
+                    let p = obj;
+                    while (p) {
+                        if (p === this.sculpture) return true;
+                        p = p.parent;
+                    }
+                }
+                return false;
+            };
+
             const hit = hits.find(h => {
-                if (h.object === this.rock) return true;
+                if (isCenterObj(h.object)) return true;
                 let obj = h.object;
                 while (obj) {
                     if (this.doors.some(d => d.group === obj)) return true;
@@ -920,7 +1034,7 @@ class DuarApp {
             
             if (hit) {
                 hoverActive = true;
-                if (hit.object !== this.rock) {
+                if (!isCenterObj(hit.object)) {
                     let obj = hit.object;
                     while (obj) {
                         hoveredDoor = this.doors.find(d => d.group === obj);
@@ -1061,23 +1175,65 @@ class DuarApp {
         });
     }
 
-    resetScene() {
+    getDefaultOverview() {
+        const target = new THREE.Vector3(0, 1.6, 0); // Center of motion is the central sculpture
+        let camPos = new THREE.Vector3(0, 3.0, 28.5);
+
+        if (this.viewMode === 'portfolio' && this.doors.length > 0) {
+            // Target Flowers Unnamed (_DSC0284) as the default overview painting
+            const targetPainting = this.doors.find(d => d.data?.id === '_DSC0284') || this.doors.find(d => d.isPainting);
+            if (targetPainting) {
+                const worldPos = new THREE.Vector3();
+                targetPainting.group.getWorldPosition(worldPos);
+                const angle = Math.atan2(worldPos.x, worldPos.z);
+                // Position camera further zoomed out outside of circle 1 (r ~ 28.5m, y = 3.0m)
+                const r = Math.max(28.0, (targetPainting.radius || 15.0) + 13.0);
+                camPos = new THREE.Vector3(
+                    Math.sin(angle) * r,
+                    3.0,
+                    Math.cos(angle) * r
+                );
+            }
+        }
+        return { camPos, target };
+    }
+
+    resetScene(toHome = false) {
+        const lastActivePainting = (!toHome && this.viewMode === 'portfolio' && this.activeDoor?.isPainting) ? this.activeDoor : null;
+
         this.closeAllDoors();
 
-        // Hide reticle
+        // Hide reticle & focus popup
         this.activeDoor = null;
         this.daySpeed = 0.02;    // back to ambient day/night speed
         this._hideReticle();
-        this.setUIVisibility(true); // bring the dock back (door closing / returning home)
+        this.setUIVisibility(true); // bring the dock back (door closing / returning to orbit)
 
-        // Fly back to the opening overview, then resume the ambient idle orbit.
-        // The gallery is wider than the default world — its outer ring sits at r=33,
-        // so the default z=25 would drop the camera in among the paintings instead of
-        // in front of them. Stand back far enough to take the whole gallery in.
-        const homeZ = this.viewMode === 'portfolio' ? 52 : 25;
-        this.flyTo(new THREE.Vector3(0, 1.6, homeZ), new THREE.Vector3(0, 1.6, 0), 2.0, () => {
+        let target = new THREE.Vector3(0, 1.6, 0); // Center of motion is always the central sculpture
+        let camPos;
+
+        if (lastActivePainting) {
+            // Step back into orbit at the active painting's circle, looking through it to the sculpture
+            const worldPos = new THREE.Vector3();
+            lastActivePainting.group.getWorldPosition(worldPos);
+            const angle = Math.atan2(worldPos.x, worldPos.z);
+            const doorRadius = lastActivePainting.radius || 15.0;
+            const r = Math.max(28.0, doorRadius + 13.0);
+            const y = 2.8 + Math.min(doorRadius * 0.04, 3.2);
+            camPos = new THREE.Vector3(
+                Math.sin(angle) * r,
+                y,
+                Math.cos(angle) * r
+            );
+        } else {
+            const overview = this.getDefaultOverview();
+            camPos = overview.camPos;
+            target = overview.target;
+        }
+
+        this.flyTo(camPos, target, 1.8, () => {
             this.controls.autoRotate = true;
-            this.controls.autoRotateSpeed = -0.8;
+            this.controls.autoRotateSpeed = -0.6;
         });
 
         // Fade rings back in slowly
@@ -1088,7 +1244,7 @@ class DuarApp {
         // Reset FOV
         gsap.to(this.camera, {
             fov: 50, // Default FOV from CONFIG
-            duration: 2.0,
+            duration: 1.8,
             ease: "power2.inOut",
             onUpdate: () => this.camera.updateProjectionMatrix()
         });
@@ -1137,7 +1293,7 @@ class DuarApp {
             map: sunTex,
             emissiveMap: sunTex,
             emissive: 0xffaa00,
-            emissiveIntensity: 5.0,
+            emissiveIntensity: 4.5,
             fog: true
         }));
         this.scene.add(this.sunMesh);
@@ -1162,7 +1318,7 @@ class DuarApp {
             map: moonTex,
             emissiveMap: moonTex,
             emissive: 0xffffff,
-            emissiveIntensity: 3.5,
+            emissiveIntensity: 3.0,
             roughness: 0.9,
             metalness: 0,
             fog: true
@@ -1240,14 +1396,14 @@ class DuarApp {
     }
 
     setupEnvironment() {
-        const color = new THREE.Color(CONFIG.scene.fog.color);
+        const color = new THREE.Color(0x233242);
         this.scene.fog = new THREE.FogExp2(color, 0.002);
         this.renderer.setClearColor(color);
 
-        // Large Flat Plane Ground
+        // Large Flat Plane Ground (a tad bit dimmer than original 0x2c3e50)
         const groundGeo = new THREE.PlaneGeometry(5000, 5000, 1, 1);
         const groundMat = new THREE.MeshStandardMaterial({
-            color: 0x2c3e50,
+            color: 0x233242,
             roughness: 0.9,
             metalness: 0.1,
             polygonOffset: true,
@@ -1387,18 +1543,44 @@ class DuarApp {
         this._switching = true;
         this.viewMode = mode;
 
+        if (this.instaBtn) {
+            this.instaBtn.style.display = mode === 'portfolio' ? 'inline-flex' : 'none';
+        }
+
         // Paintings are unlit and untone-mapped, so their pixels reach the bloom pass
         // at full value — against the default 0.2 threshold the entire artwork blooms
         // and blows out to white. Lift the threshold above paint so only genuinely
         // emissive things (sun, moon, the cone's highlight) still glow.
         if (mode === 'portfolio') {
             gsap.to(this.bloomPass, { threshold: 0.95, strength: 0.55, duration: 0.6 });
+            if (this.rock) {
+                gsap.to(this.rock.scale, {
+                    x: 0.001, y: 0.001, z: 0.001, duration: 0.4, ease: 'power2.in',
+                    onComplete: () => { this.rock.visible = false; }
+                });
+            }
+            if (this.sculpture) {
+                this.sculpture.visible = true;
+                this.sculpture.scale.setScalar(0.001);
+                gsap.to(this.sculpture.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.3)', delay: 0.2 });
+            }
         } else {
             gsap.to(this.bloomPass, {
                 threshold: this._bloomDefaults.threshold,
                 strength: this._bloomDefaults.strength,
                 duration: 0.6
             });
+            if (this.sculpture) {
+                gsap.to(this.sculpture.scale, {
+                    x: 0.001, y: 0.001, z: 0.001, duration: 0.4, ease: 'power2.in',
+                    onComplete: () => { this.sculpture.visible = false; }
+                });
+            }
+            if (this.rock) {
+                this.rock.visible = true;
+                this.rock.scale.setScalar(0.001);
+                gsap.to(this.rock.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.3)', delay: 0.2 });
+            }
         }
 
         this.resetScene();
@@ -1472,8 +1654,7 @@ class DuarApp {
                 portalHitbox: panel
             };
 
-            // Titles are blank in the manifest until they're filled in; show
-            // nothing rather than a camera filename.
+            // Titles are loaded from manifest for hover label
             doorObj.name = painting.title || '';
             if (doorObj.name) {
                 const labelEl = document.createElement('div');
@@ -1482,7 +1663,6 @@ class DuarApp {
                 document.body.appendChild(labelEl);
                 doorObj.labelEl = labelEl;
             }
-
             this.doors.push(doorObj);
         });
 
@@ -1490,14 +1670,12 @@ class DuarApp {
         const byDistance = this.doors.slice().sort((a, b) => a.radius - b.radius);
         byDistance.forEach((door, i) => setTimeout(() => loadPaintingTexture(door), i * 60));
 
-        // Open on the newest painting: it's first in the sorted order, so it's the
-        // innermost. Wait for its texture before flying, or the gallery would open
-        // on a blank grey panel.
-        const newest = this.doors[0];
-        if (newest) {
-            loadPaintingTexture(newest, () => {
-                if (this.viewMode === 'portfolio' && !this.activeDoor) this.focusPainting(newest);
-            });
+        // Start initial view framing the first painting in zoomed-out focus
+        if (!this.activeDoor && this.viewMode === 'portfolio') {
+            const overview = this.getDefaultOverview();
+            this.camera.position.copy(overview.camPos);
+            this.controls.target.copy(overview.target);
+            this.camera.lookAt(overview.target);
         }
     }
 
@@ -1629,14 +1807,14 @@ class DuarApp {
             polygonOffsetUnits: -1
         });
         this.rings = []; const baseR = 15; const stepR = 8;
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 12; i++) {
             const r = baseR + (i * stepR);
             const mesh = new THREE.Mesh(new THREE.RingGeometry(r - 0.125, r + 0.125, 128), this.ringMat);
             mesh.rotation.x = -Math.PI / 2;
             mesh.position.y = 0.03; // Raised slightly to avoid flickering
             mesh.receiveShadow = true;
             mesh.renderOrder = 1;
-            const speed = (i % 2 === 0 ? 1 : -1) * (0.0003 + (i * 0.0002));
+            const speed = (i % 2 === 0 ? 1 : -1) * (0.0003 + (i * 0.0001));
             this.scene.add(mesh); this.rings.push({ mesh, speed });
         }
     }
@@ -1655,6 +1833,10 @@ class DuarApp {
         this.rock.visible = false;
         this.scene.add(this.rock);
 
+        // Center ceramic sculpture for paintings / portfolio mode
+        this.sculpture = createCeramicSculpture(this.loadingManager);
+        this.sculpture.visible = false;
+        this.scene.add(this.sculpture);
     }
 
     setupDustMotes() {
@@ -1708,8 +1890,8 @@ class DuarApp {
             const mH = Math.max(0, -Math.sin(this.sunAngle));
 
             // Concurrent cross-fade
-            this.sunLight.intensity = (Math.sin(this.sunAngle) + 0.1 > 0) ? (sH * 5.0) : 0;
-            this.moonLight.intensity = (-Math.sin(this.sunAngle) + 0.1 > 0) ? (mH * 3.5) : 0;
+            this.sunLight.intensity = (Math.sin(this.sunAngle) + 0.1 > 0) ? (sH * 4.8) : 0;
+            this.moonLight.intensity = (-Math.sin(this.sunAngle) + 0.1 > 0) ? (mH * 3.2) : 0;
 
             const angleMod = ((this.sunAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
             const transitionZone = Math.PI / 3;
@@ -1752,7 +1934,7 @@ class DuarApp {
                 }
             }
 
-            const dayColor = new THREE.Color(0x2c3e50);
+            const dayColor = new THREE.Color(0x233242);
             const nightColor = new THREE.Color(0x050510);
             const currColor = new THREE.Color(0x000000);
             currColor.lerp(dayColor, sH);
@@ -1770,11 +1952,15 @@ class DuarApp {
             }
         }
         if (this.rings) this.rings.forEach(r => r.mesh.rotation.z += r.speed);
-        if (this.rock) {
+        if (this.rock && this.rock.visible) {
             // Base sits flush on the ground (cone geometry base is at local y=0)
             this.rock.position.y = 0;
             // Slowly rotating
             this.rock.rotation.y = this.time * 0.5;
+        }
+        if (this.sculpture && this.sculpture.visible) {
+            this.sculpture.position.y = 0;
+            this.sculpture.rotation.y = this.time * 0.25;
         }
 
         // Update portal shader time uniforms
