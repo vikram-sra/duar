@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Camera originals for the portfolio (104MB). Only the resized copies in
+# public/portfolio/ are served and committed — regenerate with: npm run portfolio.
+# Leading slash matters: a bare "portfolio/" would also ignore public/portfolio/.
+/portfolio/

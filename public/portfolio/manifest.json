@@ -1,0 +1,181 @@
+{
+  "maxEdge": 1400,
+  "paintings": [
+    {
+      "id": "_DSC0153",
+      "file": "_DSC0153.jpg",
+      "width": 2620,
+      "height": 2620,
+      "aspect": 1,
+      "title": ""
+    },
+    {
+      "id": "_DSC0165-3",
+      "file": "_DSC0165-3.jpg",
+      "width": 4080,
+      "height": 1910,
+      "aspect": 2.1361,
+      "title": ""
+    },
+    {
+      "id": "_DSC0167",
+      "file": "_DSC0167.jpg",
+      "width": 2564,
+      "height": 3242,
+      "aspect": 0.7909,
+      "title": ""
+    },
+    {
+      "id": "_DSC2092-2",
+      "file": "_DSC2092-2.jpg",
+      "width": 1050,
+      "height": 1350,
+      "aspect": 0.7778,
+      "title": ""
+    },
+    {
+      "id": "_DSC3062",
+      "file": "_DSC3062.jpg",
+      "width": 2611,
+      "height": 3264,
+      "aspect": 0.7999,
+      "title": ""
+    },
+    {
+      "id": "_DSC3085",
+      "file": "_DSC3085.jpg",
+      "width": 1536,
+      "height": 1920,
+      "aspect": 0.8,
+      "title": ""
+    },
+    {
+      "id": "_DSC3363_2",
+      "file": "_DSC3363_2.jpg",
+      "width": 2312,
+      "height": 2851,
+      "aspect": 0.8109,
+      "title": ""
+    },
+    {
+      "id": "_DSC5167",
+      "file": "_DSC5167.jpg",
+      "width": 1536,
+      "height": 1920,
+      "aspect": 0.8,
+      "title": ""
+    },
+    {
+      "id": "_DSC5198_1",
+      "file": "_DSC5198_1.jpg",
+      "width": 1080,
+      "height": 1350,
+      "aspect": 0.8,
+      "title": ""
+    },
+    {
+      "id": "_DSC5199",
+      "file": "_DSC5199.jpg",
+      "width": 2310,
+      "height": 2310,
+      "aspect": 1,
+      "title": ""
+    },
+    {
+      "id": "_DSC5207_1",
+      "file": "_DSC5207_1.jpg",
+      "width": 1080,
+      "height": 1350,
+      "aspect": 0.8,
+      "title": ""
+    },
+    {
+      "id": "_DSC6711Large",
+      "file": "_DSC6711Large.jpg",
+      "width": 4021,
+      "height": 2262,
+      "aspect": 1.7776,
+      "title": ""
+    },
+    {
+      "id": "_DSC7622",
+      "file": "_DSC7622.jpg",
+      "width": 4710,
+      "height": 3536,
+      "aspect": 1.332,
+      "title": ""
+    },
+    {
+      "id": "_DSC8434small",
+      "file": "_DSC8434small.jpg",
+      "width": 1080,
+      "height": 1084,
+      "aspect": 0.9963,
+      "title": ""
+    },
+    {
+      "id": "_DSC8445",
+      "file": "_DSC8445.jpg",
+      "width": 2540,
+      "height": 2934,
+      "aspect": 0.8657,
+      "title": ""
+    },
+    {
+      "id": "_DSC8504",
+      "file": "_DSC8504.jpg",
+      "width": 2993,
+      "height": 3071,
+      "aspect": 0.9746,
+      "title": ""
+    },
+    {
+      "id": "_DSC8505",
+      "file": "_DSC8505.jpg",
+      "width": 2889,
+      "height": 2948,
+      "aspect": 0.98,
+      "title": ""
+    },
+    {
+      "id": "_DSC8510",
+      "file": "_DSC8510.jpg",
+      "width": 2980,
+      "height": 3052,
+      "aspect": 0.9764,
+      "title": ""
+    },
+    {
+      "id": "_DSC8944",
+      "file": "_DSC8944.jpg",
+      "width": 3393,
+      "height": 3335,
+      "aspect": 1.0174,
+      "title": ""
+    },
+    {
+      "id": "_DSC9451",
+      "file": "_DSC9451.jpg",
+      "width": 3939,
+      "height": 2210,
+      "aspect": 1.7824,
+      "title": ""
+    },
+    {
+      "id": "_DSC9851",
+      "file": "_DSC9851.jpg",
+      "width": 1960,
+      "height": 3857,
+      "aspect": 0.5082,
+      "title": ""
+    },
+    {
+      "id": "_DSC9978",
+      "file": "_DSC9978.jpg",
+      "width": 1821,
+      "height": 3580,
+      "aspect": 0.5087,
+      "title": ""
+    }
+  ]
+}

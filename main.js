@@ -6,6 +6,13 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
 import gsap from 'gsap';
 
+import { loadManifest } from './src/portfolio/manifest.js';
+import { layoutPaintings } from './src/portfolio/layout.js';
+import {
+    createPaintingDoor, loadPaintingTexture, focusDistanceFor, PANEL_HEIGHT,
+    postGeometry, frameMaterial
+} from './src/portfolio/paintingDoor.js';
+
 const CONFIG = {
     "scene": {
         "fog": { "color": "#2c3e50", "near": 20, "far": 90 },
@@ -37,6 +44,8 @@ class DuarApp {
         this._orbitRadius = null; // When set, render loop enforces this distance from controls.target
         this.hoveredDoor = null;  // Door currently under the cursor (drives label display)
         this.elapsed = 0;         // Real seconds since start (delta-time accumulator)
+        this.viewMode = 'default'; // 'default' doors, or the 'portfolio' of paintings
+        this._switching = false;
         this.particleSystems = [];
         this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Ground plane
         this.loadingManager = new THREE.LoadingManager();
@@ -62,6 +71,9 @@ class DuarApp {
         // never reach this handler.)
         reticle.addEventListener('click', (e) => {
             e.stopPropagation();
+            // A painting has nothing behind it to enter, so there's nothing to
+            // refuse — only the cross is live in portfolio view.
+            if (this.viewMode === 'portfolio') return;
             this._refuseEntry();
         });
         // "Go Back": close the open door and fly home.
@@ -107,6 +119,9 @@ class DuarApp {
     _showReticle() {
         const reticle = document.getElementById('reticle');
         if (!reticle) return;
+        // In portfolio view the dot, ring and "Enter" caption are hidden — a
+        // painting is looked at, not entered — leaving only the cross to exit.
+        reticle.classList.toggle('art-mode', this.viewMode === 'portfolio');
         reticle.classList.add('visible');
         gsap.fromTo(reticle,
             { opacity: 0, scale: 0 },
@@ -198,6 +213,7 @@ class DuarApp {
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         const bloomRes = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
         this.bloomPass = new UnrealBloomPass(bloomRes, 1.2, 0.4, 0.2); // Increased strength, lower threshold for glow
+        this._bloomDefaults = { strength: 1.2, threshold: 0.2 };
         this.composer.addPass(this.bloomPass);
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -252,6 +268,7 @@ class DuarApp {
         });
 
         this.createTimeControls();
+        this.createViewToggle();
         this._startClock();
 
         // Seed the sky to the current time of day; it then drifts slowly (see animate()).
@@ -548,6 +565,36 @@ class DuarApp {
             this.uiContainer.classList.add('ui-hidden');
             this.uiVisible = false;
         }
+        // The view switch rides with the dock — it appears and hides together.
+        this.viewToggle?.classList.toggle('ui-hidden', !visible);
+    }
+
+    // Top-right switch between the default doors and the portfolio of paintings.
+    createViewToggle() {
+        const btn = document.createElement('button');
+        btn.id = 'view-toggle';
+        btn.className = 'ui-hidden';
+        this.viewToggle = btn;
+
+        const paint = () => {
+            const toArt = this.viewMode === 'default';
+            btn.textContent = toArt ? 'Paintings' : 'Doors';
+            btn.setAttribute('aria-label', toArt ? 'Switch to paintings' : 'Switch to doors');
+        };
+        paint();
+
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (this._switching) return;
+            btn.disabled = true;
+            await this.switchView(this.viewMode === 'default' ? 'portfolio' : 'default');
+            paint();
+            btn.disabled = false;
+            this.resetUIHideTimer();
+        });
+        btn.addEventListener('pointerdown', e => e.stopPropagation());
+
+        document.body.appendChild(btn);
     }
 
     handlePointerDown(e) {
@@ -636,11 +683,17 @@ class DuarApp {
                     }
 
                     if (door) {
-                        // Clicking anywhere inside an already-open door is an attempt to
-                        // go through it, so it refuses like the Enter dot does. The cross
-                        // is the only way back out. A different, closed door still opens.
-                        if (door.isOpen) this._refuseEntry();
-                        else this.toggleDoor(door);
+                        if (door.isPainting) {
+                            // Paintings don't open — clicking one frames it.
+                            this.focusPainting(door);
+                        } else if (door.isOpen) {
+                            // Clicking inside an already-open door is an attempt to go
+                            // through it, so it refuses like the Enter dot does. The cross
+                            // is the only way back out. A different, closed door opens.
+                            this._refuseEntry();
+                        } else {
+                            this.toggleDoor(door);
+                        }
                     }
                 }
             }
@@ -1001,7 +1054,11 @@ class DuarApp {
         this.setUIVisibility(true); // bring the dock back (door closing / returning home)
 
         // Fly back to the opening overview, then resume the ambient idle orbit.
-        this.flyTo(new THREE.Vector3(0, 1.6, 25), new THREE.Vector3(0, 1.6, 0), 2.0, () => {
+        // The gallery is wider than the default world — its outer ring sits at r=33,
+        // so the default z=25 would drop the camera in among the paintings instead of
+        // in front of them. Stand back far enough to take the whole gallery in.
+        const homeZ = this.viewMode === 'portfolio' ? 52 : 25;
+        this.flyTo(new THREE.Vector3(0, 1.6, homeZ), new THREE.Vector3(0, 1.6, 0), 2.0, () => {
             this.controls.autoRotate = true;
             this.controls.autoRotateSpeed = -0.8;
         });
@@ -1269,6 +1326,175 @@ class DuarApp {
         };
         tick();
         this._clockInterval = setInterval(tick, 40); // decoupled from the rAF ticker so ms stays smooth
+    }
+
+    // ── World building ──────────────────────────────────────────────────────
+    // Two worlds share one scene: the default doors and the portfolio of
+    // paintings. Only the door set is swapped — cone, rings, sky, clock and the
+    // day/night cycle carry straight through, so the world reconfigures rather
+    // than reloads.
+
+    // Tear down the current door set completely. Without disposing here, toggling
+    // views repeatedly would leak a full set of geometries and textures each time.
+    clearDoors() {
+        this.activeDoor = null;
+        this.hoveredDoor = null;
+        this._hideReticle();
+
+        this.doors.forEach(door => {
+            door.labelEl?.remove();
+            door._texture?.dispose();
+
+            door.group.traverse(obj => {
+                if (!obj.isMesh) return;
+                // Identity, not name: only the two module-level shared assets survive.
+                // Matching on name === 'Frame' also spared the per-door lintel and base
+                // geometries, which leaked ~119 geometries per view switch.
+                if (obj.geometry && obj.geometry !== postGeometry) obj.geometry.dispose();
+                if (obj.material && obj.material !== frameMaterial) {
+                    if (obj.material.map && obj.material.map !== door._texture) obj.material.map.dispose();
+                    obj.material.dispose();
+                }
+            });
+
+            this.scene.remove(door.group);
+        });
+
+        this.doors = [];
+    }
+
+    // Fade the current doors out, build the new world, fade it in. Staggered
+    // outward from the centre so it reads as the world responding, not a refresh.
+    async switchView(mode) {
+        if (this._switching || mode === this.viewMode) return;
+        this._switching = true;
+        this.viewMode = mode;
+
+        // Paintings are unlit and untone-mapped, so their pixels reach the bloom pass
+        // at full value — against the default 0.2 threshold the entire artwork blooms
+        // and blows out to white. Lift the threshold above paint so only genuinely
+        // emissive things (sun, moon, the cone's highlight) still glow.
+        if (mode === 'portfolio') {
+            gsap.to(this.bloomPass, { threshold: 0.95, strength: 0.55, duration: 0.6 });
+        } else {
+            gsap.to(this.bloomPass, {
+                threshold: this._bloomDefaults.threshold,
+                strength: this._bloomDefaults.strength,
+                duration: 0.6
+            });
+        }
+
+        this.resetScene();
+
+        const outgoing = [...this.doors];
+        await new Promise(resolve => {
+            if (!outgoing.length) return resolve();
+            const tl = gsap.timeline({ onComplete: resolve });
+            outgoing
+                .slice()
+                .sort((a, b) => a.group.position.lengthSq() - b.group.position.lengthSq())
+                .forEach((door, i) => {
+                    tl.to(door.group.scale, {
+                        x: 0.001, y: 0.001, z: 0.001,
+                        duration: 0.5, ease: 'power2.in'
+                    }, i * 0.02);
+                });
+        });
+
+        this.clearDoors();
+
+        if (mode === 'portfolio') await this.buildPortfolioDoors();
+        else this.setupDoors();
+
+        // Grow the new set in from nothing, nearest first.
+        this.doors
+            .slice()
+            .sort((a, b) => a.group.position.lengthSq() - b.group.position.lengthSq())
+            .forEach((door, i) => {
+                door.group.scale.setScalar(0.001);
+                gsap.to(door.group.scale, {
+                    x: 1, y: 1, z: 1,
+                    duration: 0.7, ease: 'back.out(1.4)', delay: i * 0.035
+                });
+            });
+
+        this._switching = false;
+    }
+
+    // The gallery: every painting in its own frame, width set by its aspect ratio.
+    async buildPortfolioDoors() {
+        const manifest = await loadManifest();
+        if (!manifest.paintings.length) {
+            console.warn('No paintings in manifest — portfolio view is empty.');
+            return;
+        }
+
+        const placed = layoutPaintings(manifest.paintings);
+
+        placed.forEach(({ painting, ring, radius, x, z, width }) => {
+            const group = new THREE.Group();
+            group.position.set(x, 0, z);
+            this.scene.add(group);
+
+            const { panel, panelMaterial } = createPaintingDoor(group, painting);
+
+            const doorObj = {
+                group,
+                data: painting,
+                panel,
+                panelMaterial,
+                width,
+                ring,
+                radius,
+                isOpen: false,
+                isPainting: true,
+                // The painting IS the clickable surface — no separate hitbox.
+                portalHitbox: panel
+            };
+
+            // Titles are blank in the manifest until they're filled in; show
+            // nothing rather than a camera filename.
+            doorObj.name = painting.title || '';
+            if (doorObj.name) {
+                const labelEl = document.createElement('div');
+                labelEl.className = 'door-label';
+                labelEl.textContent = doorObj.name;
+                document.body.appendChild(labelEl);
+                doorObj.labelEl = labelEl;
+            }
+
+            this.doors.push(doorObj);
+        });
+
+        // Resolve the near rings first — the art someone is actually looking at.
+        this.doors
+            .slice()
+            .sort((a, b) => a.radius - b.radius)
+            .forEach((door, i) => setTimeout(() => loadPaintingTexture(door), i * 60));
+    }
+
+    // Fly to a painting and centre it, framed so the whole work is on screen.
+    // Nothing opens — there is no portal behind a painting.
+    focusPainting(door) {
+        if (this.isTraveling || this._switching) return;
+        this.dismissIntro();
+
+        const worldPos = new THREE.Vector3();
+        door.group.getWorldPosition(worldPos);
+        const target = new THREE.Vector3(worldPos.x, PANEL_HEIGHT / 2 + 0.05, worldPos.z);
+
+        // Approach along the painting's own facing, so it's square-on.
+        const dir = new THREE.Vector3().subVectors(this.camera.position, target).setY(0).normalize();
+        const distance = focusDistanceFor(door.width, PANEL_HEIGHT, this.camera);
+        const camPos = target.clone().addScaledVector(dir, distance);
+        camPos.y = PANEL_HEIGHT / 2 + 0.05;
+
+        this.activeDoor = door;
+        this.flyTo(camPos, target, 1.6, () => {
+            this._orbitRadius = null;
+            this.controls.autoRotate = false;   // hold still while looking
+            this._showReticle();
+        });
     }
 
     setupDoors() {
