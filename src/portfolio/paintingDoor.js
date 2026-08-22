@@ -95,7 +95,8 @@ export function loadPaintingTexture(door, onLoaded) {
         `/portfolio/${door.data.file}`,
         (texture) => {
             texture.colorSpace = THREE.SRGBColorSpace;
-            texture.anisotropy = 4;          // paintings are often seen at a glancing angle
+            texture.anisotropy = 2;          // Sharp at glancing angles with low memory bandwidth
+            texture.generateMipmaps = true;
             texture.minFilter = THREE.LinearMipmapLinearFilter;
 
             const mat = door.panelMaterial;

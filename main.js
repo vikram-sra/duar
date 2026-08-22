@@ -279,9 +279,16 @@ class DuarApp {
         this.camera.position.set(0, 3.0, 28.5);
         this.camera.lookAt(0, 1.6, 0);
 
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance", alpha: false });
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (window.innerWidth < 768);
+        this.isMobile = isMobile;
+
+        this.renderer = new THREE.WebGLRenderer({
+            antialias: !isMobile, // Hardware MSAA on mobile postprocessing causes heavy bandwidth & heat
+            powerPreference: "high-performance",
+            alpha: false
+        });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.7;
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -293,7 +300,9 @@ class DuarApp {
 
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
-        const bloomRes = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
+        const bloomRes = isMobile
+            ? new THREE.Vector2(Math.floor(window.innerWidth / 4), Math.floor(window.innerHeight / 4))
+            : new THREE.Vector2(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2));
         this.bloomPass = new UnrealBloomPass(bloomRes, 1.1, 0.4, 0.22);
         this._bloomDefaults = { strength: 1.1, threshold: 0.22 };
         this.composer.addPass(this.bloomPass);
@@ -1271,21 +1280,23 @@ class DuarApp {
         this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222244, 0.3);
         this.scene.add(this.hemiLight);
 
+        const shadowRes = this.isMobile ? 1024 : 2048;
+
         this.sunDist = 600;
         this.sunLight = new THREE.DirectionalLight(0xffddaa, 1.5);
         this.sunLight.castShadow = true;
-        this.sunLight.shadow.mapSize.width = 8192;
-        this.sunLight.shadow.mapSize.height = 8192;
+        this.sunLight.shadow.mapSize.width = shadowRes;
+        this.sunLight.shadow.mapSize.height = shadowRes;
         this.sunLight.shadow.camera.near = 0.5;
-        this.sunLight.shadow.camera.far = 1000;
-        const d = 55;
+        this.sunLight.shadow.camera.far = 800;
+        const d = 50;
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
-        this.sunLight.shadow.bias = -0.0000;
-        this.sunLight.shadow.normalBias = 0;
-        this.sunLight.shadow.radius = 3;
+        this.sunLight.shadow.bias = -0.0001;
+        this.sunLight.shadow.normalBias = 0.02;
+        this.sunLight.shadow.radius = 2;
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
@@ -1300,17 +1311,17 @@ class DuarApp {
 
         this.moonLight = new THREE.DirectionalLight(0xaaccff, 2.0);
         this.moonLight.castShadow = true;
-        this.moonLight.shadow.mapSize.width = 8192;
-        this.moonLight.shadow.mapSize.height = 8192;
+        this.moonLight.shadow.mapSize.width = shadowRes;
+        this.moonLight.shadow.mapSize.height = shadowRes;
         this.moonLight.shadow.camera.near = 0.5;
-        this.moonLight.shadow.camera.far = 1000;
-        this.moonLight.shadow.camera.left = -55;
-        this.moonLight.shadow.camera.right = 55;
-        this.moonLight.shadow.camera.top = 55;
-        this.moonLight.shadow.camera.bottom = -55;
-        this.moonLight.shadow.bias = -0.0000;
-        this.moonLight.shadow.normalBias = 0;
-        this.moonLight.shadow.radius = 3;
+        this.moonLight.shadow.camera.far = 800;
+        this.moonLight.shadow.camera.left = -50;
+        this.moonLight.shadow.camera.right = 50;
+        this.moonLight.shadow.camera.top = 50;
+        this.moonLight.shadow.camera.bottom = -50;
+        this.moonLight.shadow.bias = -0.0001;
+        this.moonLight.shadow.normalBias = 0.02;
+        this.moonLight.shadow.radius = 2;
         this.scene.add(this.moonLight);
 
         const moonTex = this.generateMoonTexture();
@@ -1666,9 +1677,9 @@ class DuarApp {
             this.doors.push(doorObj);
         });
 
-        // Resolve the near rings first — the art someone is actually looking at.
+        // Progressive streaming: load the immediate 8 closest paintings on start
         const byDistance = this.doors.slice().sort((a, b) => a.radius - b.radius);
-        byDistance.forEach((door, i) => setTimeout(() => loadPaintingTexture(door), i * 60));
+        byDistance.slice(0, 8).forEach((door) => loadPaintingTexture(door));
 
         // Start initial view framing the first painting in zoomed-out focus
         if (!this.activeDoor && this.viewMode === 'portfolio') {
@@ -1684,6 +1695,7 @@ class DuarApp {
     focusPainting(door) {
         if (this.isTraveling || this._switching) return;
         this.dismissIntro();
+        loadPaintingTexture(door); // Ensure high-res texture is loaded immediately upon selection
 
         const worldPos = new THREE.Vector3();
         door.group.getWorldPosition(worldPos);
@@ -1886,12 +1898,13 @@ class DuarApp {
 
             this.moonMesh.rotation.y = Math.atan2(-x, zPlane) + Math.PI;
 
-            const sH = Math.max(0, Math.sin(this.sunAngle));
-            const mH = Math.max(0, -Math.sin(this.sunAngle));
-
-            // Concurrent cross-fade
-            this.sunLight.intensity = (Math.sin(this.sunAngle) + 0.1 > 0) ? (sH * 4.8) : 0;
-            this.moonLight.intensity = (-Math.sin(this.sunAngle) + 0.1 > 0) ? (mH * 3.2) : 0;
+            // Concurrent cross-fade & smart shadow pass (only compute shadow for active celestial light)
+            const isSunActive = sH > 0.04;
+            const isMoonActive = mH > 0.04;
+            this.sunLight.intensity = isSunActive ? (sH * 4.8) : 0;
+            this.moonLight.intensity = isMoonActive ? (mH * 3.2) : 0;
+            this.sunLight.castShadow = isSunActive;
+            this.moonLight.castShadow = !isSunActive && isMoonActive;
 
             const angleMod = ((this.sunAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
             const transitionZone = Math.PI / 3;
@@ -1961,6 +1974,20 @@ class DuarApp {
         if (this.sculpture && this.sculpture.visible) {
             this.sculpture.position.y = 0;
             this.sculpture.rotation.y = this.time * 0.25;
+        }
+
+        // Progressive proximity texture streaming (prevents VRAM spikes and thermal throttling)
+        if (this.viewMode === 'portfolio' && (!this._lastTexCheck || nowMs - this._lastTexCheck > 250)) {
+            this._lastTexCheck = nowMs;
+            const camPos = this.camera.position;
+            for (let i = 0; i < this.doors.length; i++) {
+                const door = this.doors[i];
+                if (door.isPainting && !door._textureRequested) {
+                    if (camPos.distanceTo(door.group.position) < 42.0) {
+                        loadPaintingTexture(door);
+                    }
+                }
+            }
         }
 
         // Update portal shader time uniforms

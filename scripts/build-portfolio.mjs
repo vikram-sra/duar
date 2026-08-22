@@ -38,7 +38,7 @@ const OUT = join('public', 'portfolio');
 // tonal passages all survive with no visible blocking, at roughly half the weight of
 // 1600 @ q78 (15.4 MB → ~7.6 MB across the set). A painting is 3.5 m tall and only
 // fills the viewport when focused, so 1400 px is about one screen-height of detail.
-const MAX_EDGE = 1400;   // longest side, px
+const MAX_EDGE = 1200;   // longest side, px
 const QUALITY = 60;      // JPEG quality
 
 function dimensions(file) {
