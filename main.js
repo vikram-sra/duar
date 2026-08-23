@@ -14,6 +14,7 @@ import {
     unitBox, unitPlane, frameMaterial, updatePaintingFramesMaterial
 } from './src/portfolio/paintingDoor.js';
 import { createCeramicSculpture } from './src/portfolio/sculpture.js';
+import { createTorontoSkySystem, calculateTorontoSunMoon } from './src/sky/celestial.js';
 
 const CONFIG = {
     "scene": {
@@ -1142,11 +1143,13 @@ class DuarApp {
             // "Portal ignites" — brief bloom bump that eases back to the resting strength.
             gsap.fromTo(this.bloomPass, { strength: 2.0 }, { strength: 1.2, duration: 1.6, ease: 'power2.out', overwrite: true });
 
-            const targetPoint = door.group.position.clone();
-            targetPoint.y = 1.75;
+            const targetPoint = new THREE.Vector3();
+            door.group.getWorldPosition(targetPoint);
+            targetPoint.y = 1.78; // Dead center of door frame aperture
 
             // Dolly straight in along the door -> current-camera line.
-            const direction = new THREE.Vector3().subVectors(this.camera.position, targetPoint).normalize();
+            const direction = new THREE.Vector3().subVectors(this.camera.position, targetPoint).setY(0).normalize();
+            if (direction.lengthSq() < 1e-4) direction.set(0, 0, 1);
 
             // Netflix-intro-logo framing: distance D so the frame fills the viewport width.
             const fovRad = (this.camera.fov / 2) * (Math.PI / 180);
@@ -1163,7 +1166,7 @@ class DuarApp {
             // Genuine fly-to: interpolate the camera THROUGH space to the door, then
             // hand off to a gentle orbit around the now-open portal and show the reticle.
             this.flyTo(targetCamPos, targetPoint, 1.9, () => {
-                this._orbitRadius = this.camera.position.distanceTo(this.controls.target);
+                this.controls.target.copy(targetPoint);
                 this.controls.autoRotate = true;
                 this.controls.autoRotateSpeed = -0.25;
                 if (this.activeDoor === door) this._showReticle();
@@ -1185,18 +1188,20 @@ class DuarApp {
             this.setUIVisibility(true); // bring the dock back now that the door is closing
 
             // Pull back in parallel with continued rotation
-            const doorPos = door.group.position.clone();
-            doorPos.y = 1.75;
+            const doorPos = new THREE.Vector3();
+            door.group.getWorldPosition(doorPos);
+            doorPos.y = 1.78;
 
-            // Point target at door, rotation continues uninterrupted
-            gsap.to(this.controls.target, { x: doorPos.x, y: 1.6, z: doorPos.z, duration: 1.8, ease: "power3.inOut" });
+            const pullDir = new THREE.Vector3().subVectors(this.camera.position, doorPos).setY(0).normalize();
+            if (pullDir.lengthSq() < 1e-4) pullDir.set(0, 0, 1);
+            const pullCamPos = doorPos.clone().addScaledVector(pullDir, 8.0);
+            pullCamPos.y = 2.8;
 
-            // Tween radius outward — autoRotate already running
+            gsap.to(this.camera.position, { x: pullCamPos.x, y: pullCamPos.y, z: pullCamPos.z, duration: 1.8, ease: "power3.inOut" });
+            gsap.to(this.controls.target, { x: doorPos.x, y: 1.78, z: doorPos.z, duration: 1.8, ease: "power3.inOut" });
+
             this.controls.autoRotate = true;
             this.controls.autoRotateSpeed = -0.6; // Clockwise
-            const currentRadius = this.camera.position.distanceTo(this.controls.target);
-            this._orbitRadius = currentRadius;
-            gsap.to(this, { _orbitRadius: 8.0, duration: 1.8, ease: "power3.inOut" });
 
             gsap.to(this.camera, {
                 fov: 50, duration: 1.8, ease: "power3.inOut",
@@ -1220,13 +1225,8 @@ class DuarApp {
         });
     }
 
-
-
     // Smoothly fly the camera THROUGH space to `camPos` while aiming at `lookAt`.
-    // Suspends auto-rotate, damping, and the orbit-radius override so the positional
-    // tween is authoritative (otherwise controls.update() / the render loop fight it).
     flyTo(camPos, lookAt, duration = 1.9, onArrive = null) {
-        this._orbitRadius = null;
         this.controls.autoRotate = false;
         this.controls.enableDamping = false;
         gsap.killTweensOf(this.camera.position);
@@ -1239,6 +1239,7 @@ class DuarApp {
             x: lookAt.x, y: lookAt.y, z: lookAt.z,
             duration, ease: "power3.inOut", overwrite: true,
             onComplete: () => {
+                this.controls.target.copy(lookAt);
                 this.controls.enableDamping = true;
                 if (onArrive) onArrive();
             }
@@ -1341,9 +1342,9 @@ class DuarApp {
         this.hemiLight = new THREE.HemisphereLight(0xfff3d8, 0x221c16, 0.28);
         this.scene.add(this.hemiLight);
 
-        const shadowRes = this.isMobile ? 1024 : 2048;
+        const shadowRes = this.isMobile ? 512 : 1536;
 
-        this.sunDist = 600;
+        this.sunDist = 650;
         this.sunLight = new THREE.DirectionalLight(0xfff2c8, 2.5); // Warmer, slightly yellower and brighter daylight
         this.sunLight.castShadow = true;
         this.sunLight.shadow.mapSize.width = shadowRes;
@@ -1361,13 +1362,13 @@ class DuarApp {
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
-        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(28, 64, 64), new THREE.MeshStandardMaterial({
+        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(24, 32, 32), new THREE.MeshStandardMaterial({
             map: sunTex,
             emissiveMap: sunTex,
             emissive: 0xffe477,
             emissiveIntensity: 2.2,
             roughness: 0.85,
-            fog: true
+            fog: false
         }));
         this.scene.add(this.sunMesh);
 
@@ -1387,14 +1388,14 @@ class DuarApp {
         this.scene.add(this.moonLight);
 
         const moonTex = this.generateMoonTexture();
-        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(18, 64, 64), new THREE.MeshStandardMaterial({
+        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(16, 32, 32), new THREE.MeshStandardMaterial({
             map: moonTex,
             emissiveMap: moonTex,
             emissive: 0xe0e8f2,
             emissiveIntensity: 1.1,
             roughness: 0.92,
             metalness: 0,
-            fog: true
+            fog: false
         }));
         this.scene.add(this.moonMesh);
     }
@@ -1468,45 +1469,8 @@ class DuarApp {
 
         this.createSacredGeometry();
         this.createCentralRock();
-        this.createSkyDome();
-    }
-
-    // A large gradient sphere behind everything: keeps the sky/fog flat color, but adds a
-    // faint warm band hugging the horizon so night never reads as fully, uniformly black.
-    createSkyDome() {
-        const geo = new THREE.SphereGeometry(400, 32, 16);
-        const mat = new THREE.ShaderMaterial({
-            uniforms: {
-                uSkyColor: { value: new THREE.Color(CONFIG.scene.fog.color) },
-                uGlowColor: { value: new THREE.Color(0x445366) }, // Subtle natural horizon atmosphere
-                uGlowStrength: { value: 0.0 } // driven by moon height — 0 by day, faint by night
-            },
-            vertexShader: `
-                varying vec3 vPos;
-                void main() {
-                    vPos = position;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                }
-            `,
-            fragmentShader: `
-                uniform vec3 uSkyColor;
-                uniform vec3 uGlowColor;
-                uniform float uGlowStrength;
-                varying vec3 vPos;
-                void main() {
-                    float h = normalize(vPos).y; // -1 at nadir, 0 at horizon, 1 at zenith
-                    float band = exp(-pow(h * 9.0, 2.0)); // hugs the horizon, fades dark quickly going up
-                    vec3 col = mix(uSkyColor, uGlowColor, band * uGlowStrength);
-                    gl_FragColor = vec4(col, 1.0);
-                }
-            `,
-            side: THREE.BackSide,
-            fog: false,
-            depthWrite: false
-        });
-        this.skyDome = new THREE.Mesh(geo, mat);
-        this.skyDome.renderOrder = -1;
-        this.scene.add(this.skyDome);
+        this.skySystem = createTorontoSkySystem(850, this.isMobile);
+        this.scene.add(this.skySystem.skyRoot);
     }
 
     // Map ASCII digits 0–9 to Gurmukhi numerals ੦–੯ (other characters pass through).
@@ -1739,23 +1703,22 @@ class DuarApp {
         this.dismissIntro();
         loadPaintingTexture(door); // Ensure high-res texture is loaded immediately upon selection
 
-        const worldPos = new THREE.Vector3();
-        door.group.getWorldPosition(worldPos);
-        // Aim at the painting's own centre — they're different heights now, so a
-        // fixed eye level would frame a 48in canvas and a 13in study quite differently.
-        const target = new THREE.Vector3(worldPos.x, door.centreY, worldPos.z);
+        // Exact world-space dead center of the painting panel
+        const target = new THREE.Vector3();
+        door.panel.getWorldPosition(target);
 
         // Approach along the painting's own facing, so it's square-on.
         const dir = new THREE.Vector3().subVectors(this.camera.position, target).setY(0).normalize();
+        if (dir.lengthSq() < 1e-4) dir.set(0, 0, 1);
         const distance = focusDistanceFor(door.width, door.height, this.camera);
         const camPos = target.clone().addScaledVector(dir, distance);
-        camPos.y = door.centreY;
+        camPos.y = target.y; // Match eye level to artwork dead center
 
         this.activeDoor = door;
         this.flyTo(camPos, target, 1.6, () => {
-            this._orbitRadius = null;
+            this.controls.target.copy(target);
             this.controls.autoRotate = false;   // hold still while looking
-            this._showReticle();
+            if (this.activeDoor === door) this._showReticle();
         });
     }
 
@@ -1985,30 +1948,27 @@ class DuarApp {
         this._lastFrame = nowMs;
         this.elapsed += dt;
 
-        if (this.sunMesh && this.moonMesh) {
+        if (this.sunMesh && this.moonMesh && this.skySystem) {
             // Ambient drift: fast responsive speed scaling for day/night cycle
             this.sunAngle += this.daySpeed * 6.0 * dt;
-            const r = this.sunDist;
-            const zPlane = -this.sunDist * 0.4;
 
-            const y = Math.sin(this.sunAngle) * r;
-            const x = Math.cos(this.sunAngle) * r;
+            // Calculate astronomically accurate Toronto solar & lunar coordinates for August
+            const sky = this.skySystem.update(this.sunAngle, this.elapsed, this.sunDist);
 
-            this.sunLight.position.set(x, y, zPlane);
-            this.sunMesh.position.set(x, y, zPlane);
-            this.moonLight.position.set(-x, -y, zPlane);
-            this.moonMesh.position.set(-x, -y, zPlane);
+            this.sunLight.position.copy(sky.cel.sunPos);
+            this.sunMesh.position.copy(sky.cel.sunPos);
+            this.moonLight.position.copy(sky.cel.moonPos);
+            this.moonMesh.position.copy(sky.cel.moonPos);
 
-            this.moonMesh.rotation.y = Math.atan2(-x, zPlane) + Math.PI;
+            this.moonMesh.lookAt(0, 0, 0);
 
-            const sH = Math.max(0, Math.sin(this.sunAngle));
-            const mH = Math.max(0, -Math.sin(this.sunAngle));
+            // True solar / lunar altitude checks
+            const isSunActive = sky.sunAlt > -0.05;
+            const isMoonActive = sky.cel.moonAlt > -0.05;
 
-            // Concurrent cross-fade & smart shadow pass (only compute shadow for active celestial light)
-            const isSunActive = sH > 0.03;
-            const isMoonActive = mH > 0.03;
-            this.sunLight.intensity = isSunActive ? (sH * 1.5) : 0;
-            this.moonLight.intensity = isMoonActive ? (mH * 1.15) : 0;
+            // Direct directional light intensity matching atmospheric absorption
+            this.sunLight.intensity = isSunActive ? (sky.sH * 1.55) : 0;
+            this.moonLight.intensity = (!isSunActive && isMoonActive) ? (sky.mH * 1.15) : 0;
             this.sunLight.castShadow = isSunActive;
             this.moonLight.castShadow = !isSunActive && isMoonActive;
 
@@ -2056,26 +2016,44 @@ class DuarApp {
                 }
             }
 
-            // Natural atmospheric sky progression: open day sky -> dusk twilight -> luminous starlit night
-            const dayColor = new THREE.Color(0x273444);
-            const nightColor = new THREE.Color(0x131a26);
-            const currColor = new THREE.Color(0x000000);
-            currColor.lerp(dayColor, sH);
-            currColor.lerp(nightColor, mH * 0.55);
+            // Atmospheric sky progression & horizon color grading
+            const dayZenith = new THREE.Color(0x28568a); // Rich, vibrant, bright daylight blue
+            const dayHorizon = new THREE.Color(0x5682ad); // Crisp daylight horizon blue
 
-            this.scene.background = currColor;
-            if (this.scene.fog) this.scene.fog.color = currColor;
+            const sunsetZenith = new THREE.Color(0x181422);
+            const sunsetHorizon = new THREE.Color(0x7e3a18);
+
+            const nightZenith = new THREE.Color(0x000000);
+            const nightHorizon = new THREE.Color(0x000000);
+
+            let skyCol = new THREE.Color();
+            let horizCol = new THREE.Color();
+
+            if (sky.sunAlt > 0.10) {
+                skyCol.copy(dayZenith);
+                horizCol.copy(dayHorizon);
+            } else if (sky.sunAlt > -0.04) {
+                const t = (0.10 - sky.sunAlt) / 0.14;
+                skyCol.lerpColors(dayZenith, sunsetZenith, t);
+                horizCol.lerpColors(dayHorizon, sunsetHorizon, t);
+            } else {
+                const t = Math.min(1.0, (-0.04 - sky.sunAlt) / 0.16);
+                skyCol.lerpColors(sunsetZenith, nightZenith, t);
+                horizCol.lerpColors(sunsetHorizon, nightHorizon, t);
+            }
+
+            if (this.skySystem && this.skySystem.skyDomeMat) {
+                this.skySystem.skyDomeMat.uniforms.uZenithColor.value.copy(skyCol);
+                this.skySystem.skyDomeMat.uniforms.uHorizonColor.value.copy(horizCol);
+            }
+
+            this.scene.background = null;
+            if (this.scene.fog) this.scene.fog.color.copy(horizCol);
 
             // Ambient sky & earth bounce light: maintains ground and sculpture visibility while keeping shadows deep
-            this.hemiLight.intensity = 0.10 + (sH * 0.20) + (mH * 0.16);
-            this.hemiLight.color.lerpColors(new THREE.Color(0x35455d), new THREE.Color(0xfcf2d4), sH);
-            this.hemiLight.groundColor.lerpColors(new THREE.Color(0x10151f), new THREE.Color(0x241f18), sH);
-
-            // Subtle horizon atmosphere
-            if (this.skyDome) {
-                this.skyDome.material.uniforms.uSkyColor.value.copy(currColor);
-                this.skyDome.material.uniforms.uGlowStrength.value = 0.12 + (mH * 0.25);
-            }
+            this.hemiLight.intensity = 0.10 + (sky.sH * 0.20) + (sky.mH * 0.16);
+            this.hemiLight.color.lerpColors(new THREE.Color(0x35455d), new THREE.Color(0xfcf2d4), sky.sH);
+            this.hemiLight.groundColor.lerpColors(new THREE.Color(0x10151f), new THREE.Color(0x241f18), sky.sH);
 
             // Real-time floor color transition: Peak daytime -> Off-white; Midnight -> Royal navy blue
             if (this.groundMat) {
@@ -2118,6 +2096,9 @@ class DuarApp {
 
         // Real-time 4-stage frame and ground circles material phasing (Gold -> Silver -> Metallic Black -> Bronze)
         updatePaintingFramesMaterial(this.sunAngle, this.ringMat);
+
+        // Update Door Name Labels (smooth projection to 2D screen space)
+        this.updateLabels();
 
         // Progressive proximity texture streaming (prevents VRAM spikes and thermal throttling)
         if (this.viewMode === 'portfolio' && (!this._lastTexCheck || nowMs - this._lastTexCheck > 250)) {
@@ -2168,12 +2149,6 @@ class DuarApp {
         }
 
         this.controls.update();
-
-        // Enforce orbit radius if set — keeps camera at target distance while autoRotate runs freely
-        if (this._orbitRadius !== null) {
-            const dir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
-            this.camera.position.copy(this.controls.target).addScaledVector(dir, this._orbitRadius);
-        }
 
         this.composer.render();
     }
