@@ -7,24 +7,38 @@ import { panelSizeFor } from './paintingDoor.js';
 // neighbours while leaving gaps around the tall portraits, so each painting's arc
 // is proportional to the width it actually occupies.
 
-export const MAX_PAINTINGS_PER_RING = 5;
 export const BASE_RADIUS = 15;
 export const RING_SPACING = 8;
 
-export function getRingRadii(paintingCount, maxPerRing = MAX_PAINTINGS_PER_RING) {
-    const ringCount = Math.max(1, Math.ceil(paintingCount / maxPerRing));
+export function getFibonacciCapacities(count) {
+    if (count <= 0) return [2];
+    const seq = [2, 3];
+    let sum = 5;
+    while (sum < count) {
+        const next = seq[seq.length - 1] + seq[seq.length - 2];
+        seq.push(next);
+        sum += next;
+    }
+    return seq;
+}
+
+export function getRingRadii(paintingCount) {
+    const perRing = distributeAcrossRings(paintingCount);
+    const ringCount = Math.max(1, perRing.length);
     return Array.from({ length: ringCount }, (_, i) => BASE_RADIUS + i * RING_SPACING);
 }
 
-// Exactly max 5 paintings per ring (5, 5, 5, ...)
-export function distributeAcrossRings(count, maxPerRing = MAX_PAINTINGS_PER_RING) {
-    const ringCount = Math.max(1, Math.ceil(count / maxPerRing));
-    const per = new Array(ringCount).fill(0);
+// Distributes paintings according to Fibonacci capacities: 2, 3, 5, 8, 13, 21, ...
+export function distributeAcrossRings(count) {
+    if (count <= 0) return [];
+    const capacities = getFibonacciCapacities(count);
+    const per = [];
 
     let remaining = count;
-    for (let i = 0; i < ringCount; i++) {
-        const take = Math.min(remaining, maxPerRing);
-        per[i] = take;
+    for (let i = 0; i < capacities.length; i++) {
+        const take = Math.min(remaining, capacities[i]);
+        if (take <= 0) break;
+        per.push(take);
         remaining -= take;
     }
     return per;
@@ -39,12 +53,13 @@ export function byYearNewestFirst(paintings) {
     });
 }
 
-// Returns [{ painting, ring, radius, angle, width }] with max 5 paintings per ring.
-// `paintings` is consumed in order, so sort before calling.
-export function layoutPaintings(paintings, maxPerRing = MAX_PAINTINGS_PER_RING) {
-    const perRing = distributeAcrossRings(paintings.length, maxPerRing);
-    const radii = getRingRadii(paintings.length, maxPerRing);
+// Returns [{ painting, ring, radius, angle, width }] placed on concentric rings according to Fibonacci distribution
+// with dynamically optimized angular phase per ring to maximize radial sightline clearance across all rings.
+export function layoutPaintings(paintings) {
+    const perRing = distributeAcrossRings(paintings.length);
+    const radii = getRingRadii(paintings.length);
     const placed = [];
+    const allAngs = [];
     let index = 0;
 
     radii.forEach((radius, ring) => {
@@ -54,20 +69,49 @@ export function layoutPaintings(paintings, maxPerRing = MAX_PAINTINGS_PER_RING) 
         if (!slice.length) return;
 
         const widths = slice.map(p => panelSizeFor(p).width);
+        const halfAngles = widths.map(w => Math.asin(Math.min(w / (2 * radius), 0.999)));
+        const step = (Math.PI * 2) / count;
 
-        // Angle each panel subtends at this radius, via the chord it spans.
-        const spans = widths.map(w => 2 * Math.asin(Math.min(w / (2 * radius), 0.999)));
-        const used = spans.reduce((a, b) => a + b, 0);
+        let bestPhase = 0;
+        let maxMinClearance = -Infinity;
 
-        // Whatever arc is left over becomes equal gaps between neighbours.
-        const gap = Math.max((Math.PI * 2 - used) / slice.length, 0);
+        if (ring === 0) {
+            // First circle items sit at 90° and 270° (left and right) for a clear front entrance sightline
+            bestPhase = Math.PI / 2;
+        } else {
+            // Search angular phases to maximize minimum line-of-sight clearance with all inner ring artworks
+            const CANDIDATES = 720;
+            for (let c = 0; c < CANDIDATES; c++) {
+                const candidatePhase = (c / CANDIDATES) * step;
+                let worstClearance = Infinity;
 
-        // Golden-ratio rotation stagger across concentric rings to prevent radial line-up
-        let cursor = (ring * 0.618033988749895 * Math.PI * 2) % (gap || 1);
+                for (let i = 0; i < count; i++) {
+                    const centerAng = (candidatePhase + i * step) % (Math.PI * 2);
+                    const hA = halfAngles[i];
+
+                    for (const prev of allAngs) {
+                        let diff = Math.abs(centerAng - prev.center);
+                        if (diff > Math.PI) diff = Math.PI * 2 - diff;
+                        const clearance = diff - (hA + prev.halfAngle);
+                        // Weight inner rings closer to current ring higher
+                        const weight = Math.pow(0.7, ring - prev.ring - 1);
+                        const weightedClearance = clearance * weight;
+                        if (weightedClearance < worstClearance) {
+                            worstClearance = weightedClearance;
+                        }
+                    }
+                }
+
+                if (worstClearance > maxMinClearance) {
+                    maxMinClearance = worstClearance;
+                    bestPhase = candidatePhase;
+                }
+            }
+        }
 
         slice.forEach((painting, i) => {
-            const angle = cursor + spans[i] / 2;      // centre of this panel's arc
-            cursor += spans[i] + gap;
+            const angle = (bestPhase + i * step) % (Math.PI * 2);
+            allAngs.push({ center: angle, halfAngle: halfAngles[i], ring });
             placed.push({
                 painting,
                 ring,

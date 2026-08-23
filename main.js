@@ -10,7 +10,7 @@ import gsap from 'gsap';
 import { loadManifest } from './src/portfolio/manifest.js';
 import { layoutPaintings, byYearNewestFirst } from './src/portfolio/layout.js';
 import {
-    createPaintingDoor, loadPaintingTexture, focusDistanceFor,
+    createPaintingDoor, loadPaintingThumbnail, loadPaintingTexture, focusDistanceFor,
     unitBox, unitPlane, frameMaterial, updatePaintingFramesMaterial
 } from './src/portfolio/paintingDoor.js';
 import { createCeramicSculpture } from './src/portfolio/sculpture.js';
@@ -337,7 +337,7 @@ class DuarApp {
         this.controls.dampingFactor = 0.05;
         this.controls.minDistance = 0.5;
         this.controls.maxDistance = 100;
-        this.controls.maxPolarAngle = Math.PI / 2 - 0.05;
+        this.controls.maxPolarAngle = Math.PI * 0.54; // Allows low-angle upward gaze into the sky
         this.controls.autoRotate = true; // Default On
         this.controls.autoRotateSpeed = -0.8; // Gentle default CW
 
@@ -556,30 +556,11 @@ class DuarApp {
         wrapper.className = 'glass-bar-wrapper';
         wrapper.onmouseenter = () => this.resetUIHideTimer();
 
-        const slider = document.createElement('input');
-        slider.type = 'range'; slider.className = 'chrome-slider';
-        slider.min = '0'; slider.max = '0.10'; slider.step = '0.001'; slider.value = '0.025';
-        slider.setAttribute('aria-label', 'Speed up time');
-        slider.oninput = (e) => { this.daySpeed = parseFloat(e.target.value); this.resetUIHideTimer(); };
-        ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
-
-        const sliderWrapper = document.createElement('div');
-        sliderWrapper.className = 'slider-wrapper';
-        const sliderTip = document.createElement('span');
-        sliderTip.className = 'btn-tip';
-        sliderTip.textContent = 'Speed up time';
-        sliderWrapper.append(slider, sliderTip);
-        let sliderTipTimeout;
-        slider.addEventListener('touchstart', () => {
-            sliderTip.classList.add('tip-visible');
-            clearTimeout(sliderTipTimeout);
-            sliderTipTimeout = setTimeout(() => sliderTip.classList.remove('tip-visible'), 1400);
-        }, { passive: true });
-
         const icons = {
             home: `<svg viewBox="0 0 24 24"><path d="M12 3L3 12L12 21L21 12L12 3Z"/></svg>`, // Diamond
             random: `<svg viewBox="0 0 24 24"><path d="M4 4h4v4H4zm12 0h4v4h-4zM4 16h4v4H4zm12 0h4v4h-4z"/></svg>`, // Pixel/Grid
             day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 1v1.5M12 21.5V23M1 12h1.5M21.5 12H23"/></svg>`, // Minimalist Sun
+            spiral: `<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9c0 4.97 4.03 9 9 9s9-4.03 9-9a7.2 7.2 0 0 0-7.2-7.2 7.2 7.2 0 0 0-7.2 7.2c0 3.09 2.51 5.6 5.6 5.6s5.6-2.51 5.6-5.6a4 4 0 0 0-4-4c-1.33 0-2.4 1.07-2.4 2.4s1.07 2.4 2.4 2.4"/></svg>`, // Spiral Icon
             night: `<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`, // Minimal Crescent
             rotate: `<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>`, // Loop Icon
             art: `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`, // Art Gallery Frame Icon
@@ -621,8 +602,10 @@ class DuarApp {
             }
         }, 'Discover');
 
-        const sunBtn = createBtn(icons.day, () => { }, 'Day'); // Click handled by wrapper
+        const sunBtn = createBtn(icons.day, () => { }, 'Day');
         sunBtn.classList.add('day-btn');
+        const spiralBtn = createBtn(icons.spiral, () => { }, 'Time Warp · Hold to cycle');
+        spiralBtn.classList.add('spiral-btn');
         const moonBtn = createBtn(icons.night, () => { }, 'Night');
         moonBtn.classList.add('night-btn');
         // Initial color based on default autoRotate = true
@@ -637,7 +620,6 @@ class DuarApp {
             let isLongPress = false;
 
             const start = (e) => {
-                // e.preventDefault(); // Removed to allow hover/focus
                 e.stopPropagation();
                 if (interval) clearInterval(interval);
                 this.resetUIHideTimer();
@@ -660,7 +642,6 @@ class DuarApp {
                     interval = null;
                 }
                 if (!isLongPress && onTap && e.type !== 'pointerleave') {
-                    // Don't trigger tap on leave
                     onTap(); // Pure click
                     this.resetUIHideTimer();
                 } else if (isLongPress) {
@@ -668,9 +649,8 @@ class DuarApp {
                     if (btn === rotateBtn && this.controls.autoRotate) {
                         this.controls.autoRotateSpeed = -0.8; // Gentle CW
                     }
-                    if ((btn === sunBtn || btn === moonBtn)) {
-                        this.daySpeed = 0; // Stop motion on release
-                        slider.value = '0'; // Slider to very left
+                    if (btn === spiralBtn || btn === sunBtn || btn === moonBtn) {
+                        this.daySpeed = 0; // Stop motion on release: stays exactly where user leaves it
                     }
                 }
             };
@@ -678,52 +658,52 @@ class DuarApp {
             btn.addEventListener('pointerdown', start);
             btn.addEventListener('pointerup', end);
             btn.addEventListener('pointerleave', end); // Handle slip-off
-            btn.addEventListener('pointerenter', () => this.resetUIHideTimer()); // Keep UI alive on hover
-            // Removed raw touch listeners as pointer events cover them mostly, and duplicates cause issues
+            btn.addEventListener('pointerenter', () => this.resetUIHideTimer());
         };
 
         // Rotate Handler
         addLongPressHandler(rotateBtn, (t) => {
-            // Hold: Hyper Speed
             if (!this.controls.autoRotate) {
                 this.controls.autoRotate = true;
                 rotateBtn.style.color = '#fff';
-                this.controls.autoRotateSpeed = -0.5; // Start gentle CW
+                this.controls.autoRotateSpeed = -0.5;
             }
-            // Exponential acceleration for "Warp Speed" feel CW
-            // Current speed is negative, so multiply by positive factor to grow magnitude
             this.controls.autoRotateSpeed = Math.min(-0.5, this.controls.autoRotateSpeed * 1.05);
-
-            if (this.controls.autoRotateSpeed < -5000) this.controls.autoRotateSpeed = -5000; // Theoretical chaos limit
+            if (this.controls.autoRotateSpeed < -5000) this.controls.autoRotateSpeed = -5000;
         }, () => {
-            // Tap: Toggle Gentle
             this.controls.autoRotate = !this.controls.autoRotate;
             rotateBtn.style.color = this.controls.autoRotate ? '#fff' : 'rgba(255,255,255,0.3)';
             if (this.controls.autoRotate) {
-                this.controls.autoRotateSpeed = -0.8; // Gentle Gentle CW
+                this.controls.autoRotateSpeed = -0.8;
             }
         });
 
-        // Sun: Hold to accelerate day time-lapse, Click to jump to Noon, stop motion, and set slider to very left (0)
+        // Spiral Time Warp: Hold to increase speed of day, release to stay exactly where left
+        addLongPressHandler(spiralBtn, (t) => {
+            if (this.daySpeed < 0.02) this.daySpeed = 0.02;
+            this.daySpeed = Math.min(0.65, this.daySpeed * 1.08); // Smooth acceleration
+        }, () => {
+            // Tap: Step forward by 1 hour
+            this.sunAngle = (this.sunAngle + (Math.PI / 12)) % (Math.PI * 2);
+            this.daySpeed = 0;
+        });
+
+        // Sun: Hold to accelerate day time-lapse, Click to jump to Noon
         addLongPressHandler(sunBtn, (t) => {
             if (this.daySpeed < 0.01) this.daySpeed = 0.01;
-            this.daySpeed = Math.min(0.10, this.daySpeed * 1.12); // Accelerate
-            slider.value = this.daySpeed;
+            this.daySpeed = Math.min(0.20, this.daySpeed * 1.10);
         }, () => {
             this.sunAngle = Math.PI / 2; // Noon
             this.daySpeed = 0;          // Stop motion
-            slider.value = '0';         // Slider to the very left
         });
 
-        // Moon: Hold to accelerate night time-lapse, Click to jump to Midnight, stop motion, and set slider to very left (0)
+        // Moon: Hold to accelerate night time-lapse, Click to jump to Midnight
         addLongPressHandler(moonBtn, (t) => {
             if (this.daySpeed < 0.01) this.daySpeed = 0.01;
-            this.daySpeed = Math.min(0.10, this.daySpeed * 1.12); // Accelerate
-            slider.value = this.daySpeed;
+            this.daySpeed = Math.min(0.20, this.daySpeed * 1.10);
         }, () => {
             this.sunAngle = 3 * Math.PI / 2; // Midnight
             this.daySpeed = 0;              // Stop motion
-            slider.value = '0';             // Slider to the very left
         });
 
         // Art / Duar switch button in dock before instagram icon
@@ -754,7 +734,7 @@ class DuarApp {
         this.instaBtn = instaBtn;
         instaBtn.style.display = this.viewMode === 'portfolio' ? 'inline-flex' : 'none';
 
-        wrapper.append(homeBtn, randBtn, sunBtn, sliderWrapper, moonBtn, rotateBtn, modeBtn, instaBtn);
+        wrapper.append(homeBtn, randBtn, sunBtn, spiralBtn, moonBtn, rotateBtn, modeBtn, instaBtn);
         container.appendChild(wrapper);
         document.body.appendChild(container);
 
@@ -1400,14 +1380,14 @@ class DuarApp {
         this.sunLight.shadow.mapSize.height = shadowRes;
         this.sunLight.shadow.camera.near = 0.5;
         this.sunLight.shadow.camera.far = 1000;
-        const d = 50;
+        const d = 110; // Covers entire gallery
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
         this.sunLight.shadow.bias = -0.0001;
-        this.sunLight.shadow.normalBias = 0.025;
-        this.sunLight.shadow.radius = 2.4; // Slightly crisper shadow penumbra for deeper core
+        this.sunLight.shadow.normalBias = 0.015;
+        this.sunLight.shadow.radius = 2.4; // Soft, natural shadow penumbra
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
@@ -1417,8 +1397,10 @@ class DuarApp {
             emissive: 0xffe477,
             emissiveIntensity: 2.2,
             roughness: 0.85,
-            fog: false
+            fog: false,
+            transparent: true
         }));
+        this.sunMesh.renderOrder = -180;
         this.scene.add(this.sunMesh);
 
         this.moonLight = new THREE.DirectionalLight(0xc8d8e8, 1.4);
@@ -1427,12 +1409,12 @@ class DuarApp {
         this.moonLight.shadow.mapSize.height = shadowRes;
         this.moonLight.shadow.camera.near = 0.5;
         this.moonLight.shadow.camera.far = 1000;
-        this.moonLight.shadow.camera.left = -50;
-        this.moonLight.shadow.camera.right = 50;
-        this.moonLight.shadow.camera.top = 50;
-        this.moonLight.shadow.camera.bottom = -50;
+        this.moonLight.shadow.camera.left = -110;
+        this.moonLight.shadow.camera.right = 110;
+        this.moonLight.shadow.camera.top = 110;
+        this.moonLight.shadow.camera.bottom = -110;
         this.moonLight.shadow.bias = -0.0001;
-        this.moonLight.shadow.normalBias = 0.025;
+        this.moonLight.shadow.normalBias = 0.015;
         this.moonLight.shadow.radius = 2.4;
         this.scene.add(this.moonLight);
 
@@ -1444,8 +1426,10 @@ class DuarApp {
             emissiveIntensity: 1.1,
             roughness: 0.92,
             metalness: 0,
-            fog: false
+            fog: false,
+            transparent: true
         }));
+        this.moonMesh.renderOrder = -180;
         this.scene.add(this.moonMesh);
     }
 
@@ -1474,43 +1458,188 @@ class DuarApp {
 
     generateMoonTexture() {
         const canvas = document.createElement('canvas');
-        canvas.width = 1024; canvas.height = 512;
+        const w = 1024; const h = 512;
+        canvas.width = w; canvas.height = h;
         const ctx = canvas.getContext('2d');
 
-        // Natural lunar surface gradient
-        ctx.fillStyle = '#b8c4d2';
-        ctx.fillRect(0, 0, 1024, 512);
+        // 1. Lunar Highlands Base: silvery-white titanium regolith with subtle limb darkening
+        const baseGrad = ctx.createLinearGradient(0, 0, 0, h);
+        baseGrad.addColorStop(0, '#e8edf3');
+        baseGrad.addColorStop(0.5, '#dbe2ea');
+        baseGrad.addColorStop(1, '#caced4');
+        ctx.fillStyle = baseGrad;
+        ctx.fillRect(0, 0, w, h);
 
-        // Maria and craters
-        for (let i = 0; i < 400; i++) {
-            const x = Math.random() * 1024;
-            const y = Math.random() * 512;
-            const r = Math.random() * 30 + 3;
-            ctx.fillStyle = Math.random() > 0.4 ? '#8a97a8' : '#d2dce6';
-            ctx.globalAlpha = Math.random() * 0.4;
-            ctx.beginPath();
-            ctx.arc(x, y, r, 0, Math.PI * 2);
-            ctx.fill();
+        // 2. High-resolution regolith mineral noise
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const d = imgData.data;
+        let seed = 12345;
+        const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+
+        for (let py = 0; py < h; py++) {
+            for (let px = 0; px < w; px++) {
+                const idx = (py * w + px) * 4;
+                const grain = (rnd() - 0.5) * 18;
+                d[idx] = Math.max(0, Math.min(255, d[idx] + grain));
+                d[idx + 1] = Math.max(0, Math.min(255, d[idx + 1] + grain));
+                d[idx + 2] = Math.max(0, Math.min(255, d[idx + 2] + grain + 2));
+            }
         }
+        ctx.putImageData(imgData, 0, 0);
+
+        // 3. Authentic Lunar Maria (Dark basaltic lava plains visible from Earth)
+        const maria = [
+            // Oceanus Procellarum & Mare Imbrium (North-West)
+            { x: 0.36 * w, y: 0.32 * h, rx: 110, ry: 75, col: 'rgba(80, 92, 106, 0.58)' },
+            { x: 0.44 * w, y: 0.30 * h, rx: 85, ry: 65, col: 'rgba(74, 86, 98, 0.62)' },
+            // Mare Serenitatis & Mare Tranquillitatis (North-East / Center-East)
+            { x: 0.58 * w, y: 0.35 * h, rx: 70, ry: 58, col: 'rgba(76, 88, 102, 0.60)' },
+            { x: 0.62 * w, y: 0.46 * h, rx: 80, ry: 60, col: 'rgba(72, 84, 96, 0.62)' },
+            // Mare Crisium (Isolated oval mare in the East)
+            { x: 0.76 * w, y: 0.38 * h, rx: 42, ry: 34, col: 'rgba(68, 78, 90, 0.65)' },
+            // Mare Fecunditatis & Mare Nectaris (South-East)
+            { x: 0.68 * w, y: 0.56 * h, rx: 65, ry: 50, col: 'rgba(78, 88, 100, 0.55)' },
+            { x: 0.59 * w, y: 0.62 * h, rx: 45, ry: 36, col: 'rgba(82, 92, 104, 0.52)' },
+            // Mare Nubium & Mare Humorum (South-West)
+            { x: 0.42 * w, y: 0.62 * h, rx: 70, ry: 52, col: 'rgba(80, 90, 102, 0.56)' },
+            { x: 0.32 * w, y: 0.60 * h, rx: 45, ry: 38, col: 'rgba(78, 88, 100, 0.54)' },
+            // Mare Frigoris (Northern elongated ribbon)
+            { x: 0.48 * w, y: 0.18 * h, rx: 140, ry: 24, col: 'rgba(84, 95, 108, 0.50)' }
+        ];
+
+        maria.forEach(m => {
+            ctx.save();
+            ctx.filter = 'blur(12px)';
+            ctx.fillStyle = m.col;
+            ctx.beginPath();
+            ctx.ellipse(m.x, m.y, m.rx, m.ry, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Organic textured inner lobe
+            ctx.fillStyle = 'rgba(64, 74, 86, 0.42)';
+            ctx.beginPath();
+            ctx.ellipse(m.x + (rnd() - 0.5) * 20, m.y + (rnd() - 0.5) * 15, m.rx * 0.65, m.ry * 0.65, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        });
+
+        // 4. Tycho Crater & Dramatic Ejecta Rays (Southern hemisphere brilliance)
+        const tychoX = 0.47 * w;
+        const tychoY = 0.78 * h;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+        ctx.lineWidth = 1.6;
+        ctx.filter = 'blur(2px)';
+        for (let a = 0; a < 24; a++) {
+            const angle = (a / 24) * Math.PI * 2 + rnd() * 0.15;
+            const rayLen = 90 + rnd() * 180;
+            ctx.beginPath();
+            ctx.moveTo(tychoX, tychoY);
+            ctx.lineTo(tychoX + Math.cos(angle) * rayLen, tychoY + Math.sin(angle) * rayLen);
+            ctx.stroke();
+        }
+        // Tycho central peak & bright nimbus
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.filter = 'blur(3px)';
+        ctx.beginPath();
+        ctx.arc(tychoX, tychoY, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // 5. Copernicus & Kepler Crater Rays (Oceanus Procellarum)
+        const rayCraters = [
+            { x: 0.41 * w, y: 0.41 * h, r: 10, rays: 14, len: 75 }, // Copernicus
+            { x: 0.32 * w, y: 0.43 * h, r: 6, rays: 10, len: 45 },  // Kepler
+            { x: 0.28 * w, y: 0.33 * h, r: 5, rays: 8, len: 35 }    // Aristarchus
+        ];
+
+        rayCraters.forEach(rc => {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+            ctx.lineWidth = 1.2;
+            ctx.filter = 'blur(1.5px)';
+            for (let i = 0; i < rc.rays; i++) {
+                const angle = (i / rc.rays) * Math.PI * 2 + rnd() * 0.2;
+                ctx.beginPath();
+                ctx.moveTo(rc.x, rc.y);
+                ctx.lineTo(rc.x + Math.cos(angle) * rc.len, rc.y + Math.sin(angle) * rc.len);
+                ctx.stroke();
+            }
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.90)';
+            ctx.beginPath();
+            ctx.arc(rc.x, rc.y, rc.r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        });
+
+        // 6. Scattered impact crater clusters across southern & limb highlands
+        for (let i = 0; i < 180; i++) {
+            const cx = rnd() * w;
+            const cy = rnd() * h;
+            const cr = 2 + rnd() * 6;
+            ctx.save();
+            // Dark crater floor
+            ctx.fillStyle = 'rgba(70, 80, 92, 0.35)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+            ctx.fill();
+            // Illuminated rim
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.arc(cx - 0.5, cy - 0.5, cr, -Math.PI * 0.75, Math.PI * 0.25);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         return new THREE.CanvasTexture(canvas);
     }
 
     setupEnvironment() {
-        const color = new THREE.Color(0x273444);
-        this.scene.fog = new THREE.FogExp2(color, 0.002);
-        this.renderer.setClearColor(color);
-
-        // Circular Ground Plane (matte natural earth/stone plane with zero square clipping edges)
-        const groundGeo = new THREE.CircleGeometry(1200, 64);
+        // Circular Ground Plane: sized 20% larger (150m radius) with smooth outer horizon illusion fade
+        const groundGeo = new THREE.CircleGeometry(150, 96);
         this.groundMat = new THREE.MeshStandardMaterial({
             color: 0x68645e,
             roughness: 1.0,
             metalness: 0.0,
             envMapIntensity: 0.0,
+            transparent: true,
+            depthWrite: true,
             polygonOffset: true,
             polygonOffsetFactor: 1, // Push back
             polygonOffsetUnits: 1
         });
+
+        this.groundMat.onBeforeCompile = (shader) => {
+            shader.vertexShader = `
+                varying vec3 vGroundWorldPos;
+            \n` + shader.vertexShader;
+
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <worldpos_vertex>',
+                `
+                #include <worldpos_vertex>
+                vGroundWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+                `
+            );
+
+            shader.fragmentShader = `
+                varying vec3 vGroundWorldPos;
+            \n` + shader.fragmentShader;
+
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <dithering_fragment>',
+                `
+                #include <dithering_fragment>
+                // Natural planetary horizon illusion: solid ground for all paintings (r <= 112m), softly fades at perimeter
+                float r = length(vGroundWorldPos.xz);
+                float edgeFade = 1.0 - smoothstep(112.0, 150.0, r);
+                gl_FragColor.a *= edgeFade;
+                if (gl_FragColor.a <= 0.002) discard;
+                `
+            );
+        };
+
         const ground = new THREE.Mesh(groundGeo, this.groundMat);
         ground.rotation.x = -Math.PI / 2;
         ground.receiveShadow = true;
@@ -1625,8 +1754,14 @@ class DuarApp {
         if (mode === 'portfolio') {
             this.updateRingGeometries(true);
             this.doors.forEach((d) => {
-                if (d.isPainting) loadPaintingTexture(d);
+                if (d.isPainting) loadPaintingThumbnail(d);
             });
+            // Prioritize high-res textures for closest paintings
+            this.doors
+                .filter(d => d.isPainting)
+                .sort((a, b) => this.camera.position.distanceTo(a.group.position) - this.camera.position.distanceTo(b.group.position))
+                .slice(0, 6)
+                .forEach((d) => loadPaintingTexture(d));
             gsap.to(this.bloomPass, { threshold: 0.92, strength: 0.20, duration: 0.6 });
             if (this.rock) {
                 gsap.to(this.rock.scale, {
@@ -1742,8 +1877,15 @@ class DuarApp {
             this.doors.push(doorObj);
         });
 
-        // Eagerly load all painting textures so none appear black
-        this.doors.forEach((door) => loadPaintingTexture(door));
+        // Eagerly load lightweight LQIP thumbnails (<5KB each) so no artwork is ever blank
+        this.doors.forEach((door) => loadPaintingThumbnail(door));
+
+        // Prioritize full-res HD textures for the front overview artworks
+        this.doors
+            .slice()
+            .sort((a, b) => this.camera.position.distanceTo(a.group.position) - this.camera.position.distanceTo(b.group.position))
+            .slice(0, 6)
+            .forEach((door) => loadPaintingTexture(door));
 
         // Start initial view framing the first painting in zoomed-out focus
         if (!this.activeDoor && this.viewMode === 'portfolio') {
@@ -1759,7 +1901,7 @@ class DuarApp {
     focusPainting(door) {
         if (this.isTraveling || this._switching) return;
         this.dismissIntro();
-        loadPaintingTexture(door); // Ensure high-res texture is loaded immediately upon selection
+        loadPaintingTexture(door, null, true); // Ensure high-res HD texture is loaded with top priority upon selection
 
         // Exact world-space dead center of the painting panel
         const target = new THREE.Vector3();
@@ -1970,7 +2112,7 @@ class DuarApp {
         });
         this.rings = []; const baseR = 15; const stepR = 8;
         const isPortfolio = this.viewMode === 'portfolio';
-        for (let i = 0; i < 12; i++) {
+        for (let i = 0; i < 10; i++) {
             const r = baseR + (i * stepR);
             // Both modes share one ribbon buffer so switching can morph the vertices rather than
             // swap geometries; a straight ring is just this same ribbon at zero wave amplitude.
@@ -1983,8 +2125,7 @@ class DuarApp {
             mesh.rotation.x = -Math.PI / 2;
             mesh.position.y = 0.002; // Flush on ground
             mesh.receiveShadow = true;
-            mesh.renderOrder = 0;
-            const speed = (i % 2 === 0 ? 1 : -1) * (0.00006 + (i * 0.00002));
+            const speed = (i % 2 === 0 ? 1 : -1) * (0.0005 + (i * 0.00008));
             this.scene.add(mesh);
             this.rings.push({ mesh, speed, radius: r, segments: RING_SEGMENTS, waveT });
         }
@@ -2089,9 +2230,18 @@ class DuarApp {
 
             this.moonMesh.lookAt(0, 0, 0);
 
+            // Fade out moon / sun when they set behind the earth horizon so they are always behind the ground plane
+            const moonFade = THREE.MathUtils.smoothstep(sky.cel.moonAlt, 0.00, 0.06);
+            this.moonMesh.material.opacity = moonFade;
+            this.moonMesh.visible = moonFade > 0.001;
+
+            const sunFade = THREE.MathUtils.smoothstep(sky.cel.sunAlt, 0.00, 0.06);
+            this.sunMesh.material.opacity = sunFade;
+            this.sunMesh.visible = sunFade > 0.001;
+
             // True solar / lunar altitude checks
-            const isSunActive = sky.sunAlt > -0.05;
-            const isMoonActive = sky.cel.moonAlt > -0.05;
+            const isSunActive = sky.sunAlt > 0.01;
+            const isMoonActive = sky.cel.moonAlt > 0.01;
 
             // Direct directional light intensity matching atmospheric absorption
             this.sunLight.intensity = isSunActive ? (sky.sH * 1.55) : 0;
@@ -2218,7 +2368,7 @@ class DuarApp {
             this.sculpture.position.y = 0;
             this.sculpture.rotation.set(0, 0, 0); // Locked into ground
 
-            // Dynamic red thread jiggle physics linked to camera orbit and motion
+            // Dynamic red thread 3D wave & jiggle physics linked to camera orbit, velocity and ambient breeze
             if (this.sculpture.userData && this.sculpture.userData.threadUniforms) {
                 const u = this.sculpture.userData.threadUniforms;
                 u.uTime.value = this.time;
@@ -2230,15 +2380,28 @@ class DuarApp {
                 while (dAngle < -Math.PI) dAngle += Math.PI * 2;
                 this._lastCamAngle = curCamAngle;
 
-                const angularSpeed = Math.abs(dAngle) / Math.max(0.001, dt);
+                const angularVelocity = dAngle / Math.max(0.001, dt);
+                const angularSpeed = Math.abs(angularVelocity);
                 if (this._threadMotion === undefined) this._threadMotion = 0;
-                const targetMotion = Math.min(3.5, angularSpeed * 1.5);
-                this._threadMotion = THREE.MathUtils.lerp(this._threadMotion, targetMotion, 0.14);
-
-                const tanX = -Math.cos(curCamAngle);
-                const tanZ = Math.sin(curCamAngle);
+                const targetMotion = Math.min(1.8, angularSpeed * 1.3);
+                const lerpSpeed = targetMotion > this._threadMotion ? 0.14 : 0.05;
+                this._threadMotion = THREE.MathUtils.lerp(this._threadMotion, targetMotion, lerpSpeed);
+                if (this._threadMotion < 0.0005) this._threadMotion = 0;
                 u.uMotion.value = this._threadMotion;
-                u.uDir.value.set(tanX, tanZ);
+
+                // 3D inertial ribbon drag vector trailing camera rotation direction
+                const rotSign = Math.sign(angularVelocity) || 1.0;
+                const tanX = -Math.sin(curCamAngle) * rotSign;
+                const tanZ = Math.cos(curCamAngle) * rotSign;
+
+                if (!this._threadDrag) this._threadDrag = new THREE.Vector2(0, 0);
+                const targetDragX = tanX * Math.min(1.0, angularSpeed * 0.7);
+                const targetDragZ = tanZ * Math.min(1.0, angularSpeed * 0.7);
+                const dragLerpSpeed = angularSpeed > 0.01 ? 0.12 : 0.05;
+                this._threadDrag.x = THREE.MathUtils.lerp(this._threadDrag.x, targetDragX, dragLerpSpeed);
+                this._threadDrag.y = THREE.MathUtils.lerp(this._threadDrag.y, targetDragZ, dragLerpSpeed);
+                if (this._threadDrag.lengthSq() < 0.0001) this._threadDrag.set(0, 0);
+                if (u.uDrag) u.uDrag.value.copy(this._threadDrag);
             }
         }
 
@@ -2248,17 +2411,18 @@ class DuarApp {
         // Update Door Name Labels (smooth projection to 2D screen space)
         this.updateLabels();
 
-        // Progressive proximity texture streaming (prevents VRAM spikes and thermal throttling)
-        if (this.viewMode === 'portfolio' && (!this._lastTexCheck || nowMs - this._lastTexCheck > 250)) {
+        // Progressive proximity texture streaming (prevents VRAM spikes and thermal throttling on older phones)
+        if (this.viewMode === 'portfolio' && (!this._lastTexCheck || nowMs - this._lastTexCheck > 200)) {
             this._lastTexCheck = nowMs;
             const camPos = this.camera.position;
-            for (let i = 0; i < this.doors.length; i++) {
-                const door = this.doors[i];
-                if (door.isPainting && !door._textureRequested) {
-                    if (camPos.distanceTo(door.group.position) < 42.0) {
-                        loadPaintingTexture(door);
-                    }
-                }
+            const candidateDoors = this.doors
+                .filter(d => d.isPainting && !d._textureRequested)
+                .map(d => ({ door: d, dist: camPos.distanceTo(d.group.position) }))
+                .filter(item => item.dist < 55.0)
+                .sort((a, b) => a.dist - b.dist);
+
+            for (let i = 0; i < Math.min(candidateDoors.length, 3); i++) {
+                loadPaintingTexture(candidateDoors[i].door);
             }
         }
 
@@ -2291,12 +2455,12 @@ class DuarApp {
             this.doors.forEach(d => d.group.lookAt(this.camera.position.x, d.group.position.y, this.camera.position.z));
         }
 
-        // Prevent camera from going below the floor
-        if (this.camera.position.y < 0.5) {
-            this.camera.position.y = 0.5;
-        }
-
         this.controls.update();
+
+        // Guaranteed ground floor clamp: camera stays above ground (>= 0.4m) while allowing low-angle upward sky gaze
+        if (this.camera.position.y < 0.4) {
+            this.camera.position.y = 0.4;
+        }
 
         this.composer.render();
     }

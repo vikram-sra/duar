@@ -1,4 +1,4 @@
-const CACHE = 'duar-v2';
+const CACHE = 'duar-v3';
 const APP_SHELL = [
     './',
     './index.html',
@@ -13,8 +13,7 @@ self.addEventListener('install', (event) => {
     );
 });
 
-// Purge any old versioned caches. Note: no clients.claim() — that avoids a
-// needless reload on the very first visit (see controllerchange handler in main.js).
+// Purge any old versioned caches.
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((keys) =>
@@ -23,15 +22,43 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// Network-first: always prefer fresh content, fall back to cache when offline.
-// This sidesteps Vite's hashed asset filenames — whatever the built HTML requests
-// gets cached on first fetch, and updated content always wins while online.
+// Cache strategy:
+// - Images and portfolio assets (/portfolio/, /models/): Cache-first with background revalidation for instant zero-latency loading on mobile.
+// - Navigation & scripts: Network-first with cache fallback.
 self.addEventListener('fetch', (event) => {
     const req = event.request;
     if (req.method !== 'GET') return;
 
-    // Let cross-origin requests (Google Fonts, waveism.duar.one, etc.) pass through untouched.
+    // Pass through cross-origin requests
     if (new URL(req.url).origin !== self.location.origin) return;
+
+    const url = new URL(req.url);
+    const isImageOrAsset = req.destination === 'image' || url.pathname.includes('/portfolio/') || url.pathname.includes('/models/');
+
+    if (isImageOrAsset) {
+        event.respondWith(
+            caches.match(req).then((cached) => {
+                if (cached) {
+                    // Revalidate in background
+                    fetch(req).then((res) => {
+                        if (res && res.ok) {
+                            const copy = res.clone();
+                            caches.open(CACHE).then((cache) => cache.put(req, copy));
+                        }
+                    }).catch(() => {});
+                    return cached;
+                }
+                return fetch(req).then((res) => {
+                    if (res && res.ok) {
+                        const copy = res.clone();
+                        caches.open(CACHE).then((cache) => cache.put(req, copy));
+                    }
+                    return res;
+                });
+            })
+        );
+        return;
+    }
 
     event.respondWith(
         fetch(req)
@@ -43,7 +70,6 @@ self.addEventListener('fetch', (event) => {
             .catch(() =>
                 caches.match(req).then((cached) => {
                     if (cached) return cached;
-                    // For navigations, fall back to the cached app shell.
                     if (req.mode === 'navigate') return caches.match('./index.html');
                     return Response.error();
                 })

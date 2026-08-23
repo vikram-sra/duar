@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "portfolio": "node scripts/build-portfolio.mjs"
+    "portfolio": "python3 scripts/build-portfolio.py"
   },
   "devDependencies": {
     "vite": "^7.2.4"
