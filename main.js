@@ -4,19 +4,20 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import gsap from 'gsap';
 
 import { loadManifest } from './src/portfolio/manifest.js';
 import { layoutPaintings, byYearNewestFirst } from './src/portfolio/layout.js';
 import {
     createPaintingDoor, loadPaintingTexture, focusDistanceFor,
-    unitBox, unitPlane, frameMaterial
+    unitBox, unitPlane, frameMaterial, updatePaintingFramesMaterial
 } from './src/portfolio/paintingDoor.js';
 import { createCeramicSculpture } from './src/portfolio/sculpture.js';
 
 const CONFIG = {
     "scene": {
-        "fog": { "color": "#233242", "near": 20, "far": 90 },
+        "fog": { "color": "#273444", "near": 25, "far": 120 },
         "camera": { "fov": 50, "startPosition": [0, 3.0, 28.5] }
     },
     "doors": [
@@ -40,6 +41,7 @@ class DuarApp {
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
         this.time = 0;
+        this.daySpeed = 0.08;
         this.isTraveling = false;
         this.activeDoor = null;  // The currently open door, target for reticle
         this._orbitRadius = null; // When set, render loop enforces this distance from controls.target
@@ -290,21 +292,34 @@ class DuarApp {
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        this.renderer.toneMappingExposure = 1.7;
+        this.renderer.toneMappingExposure = 1.02; // Clean, natural exposure
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Stable, soft shadows
+        this.renderer.shadowMap.type = THREE.PCFShadowMap; // Clean, standard PCF shadows
         this.container.appendChild(this.renderer.domElement);
 
         this.renderer.setClearColor(0x000000, 1); // Stay black initially
+
+        // Image-Based Lighting environment map for realistic chrome/gold/silver/bronze metal reflections
+        try {
+            const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
+            pmremGenerator.compileEquirectangularShader();
+            const envScene = new RoomEnvironment();
+            this.scene.environment = pmremGenerator.fromScene(envScene).texture;
+            this.scene.environmentIntensity = 0.35;
+            envScene.dispose();
+            pmremGenerator.dispose();
+        } catch (e) {
+            console.warn('Environment map initialization bypassed:', e);
+        }
 
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
         const bloomRes = isMobile
             ? new THREE.Vector2(Math.floor(window.innerWidth / 4), Math.floor(window.innerHeight / 4))
             : new THREE.Vector2(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2));
-        this.bloomPass = new UnrealBloomPass(bloomRes, 1.1, 0.4, 0.22);
-        this._bloomDefaults = { strength: 1.1, threshold: 0.22 };
+        this.bloomPass = new UnrealBloomPass(bloomRes, 0.08, 0.3, 0.98); // Very high threshold: only direct sun glows, zero ground/art blowout
+        this._bloomDefaults = { strength: 0.08, threshold: 0.98 };
         this.composer.addPass(this.bloomPass);
 
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -324,8 +339,8 @@ class DuarApp {
         this.setupEnvironment();
         if (this.viewMode === 'portfolio') {
             this.buildPortfolioDoors();
-            this.bloomPass.threshold = 0.95;
-            this.bloomPass.strength = 0.55;
+            this.bloomPass.threshold = 0.98;
+            this.bloomPass.strength = 0.08;
         } else {
             this.setupDoors();
         }
@@ -336,10 +351,11 @@ class DuarApp {
         window.addEventListener('wheel', () => this.dismissIntro(), { passive: true });
         window.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        let startX = 0; let startY = 0;
+        let startX = 0; let startY = 0; let startTime = 0;
         window.addEventListener('pointerdown', (e) => {
             this.dismissIntro();
             startX = e.clientX; startY = e.clientY;
+            startTime = performance.now();
             // Touch has no hover state — raycast on contact so a door's label appears the
             // instant you touch it, same moment a mouse user would see it on hover.
             this.onMouseMove(e);
@@ -362,22 +378,26 @@ class DuarApp {
                 this.controls.enabled = true;
                 return;
             }
-            const dist = Math.sqrt(Math.pow(e.clientX - startX, 2) + Math.pow(e.clientY - startY, 2));
-            if (dist < 10) this.onClick(e);
+            const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+            const duration = performance.now() - startTime;
+            // Strict intentional tap detection: ignores drag-releases, scrolls, or long holds (>350ms or >8px)
+            if (dist < 8 && duration < 350) this.onClick(e);
         });
 
         this.createTimeControls();
-        this.createViewToggle();
         this._startClock();
 
         // Seed the sky to the current time of day; it then drifts slowly (see animate()).
         const now = new Date();
         const hours = now.getHours() + now.getMinutes() / 60;
         this.sunAngle = ((hours - 6) / 24) * Math.PI * 2;
-        this.daySpeed = 0.02;
+        this.daySpeed = 0.05;
 
         // Fallback: dismiss the intro overlays if the user hasn't interacted yet.
         setTimeout(() => this.dismissIntro(), 14000);
+
+        // Pre-compile scene shaders on GPU to eliminate first-frame rAF stalls
+        try { this.renderer.compile(this.scene, this.camera); } catch (e) { /* noop */ }
 
         this._lastFrame = performance.now();
         this.animate();
@@ -390,53 +410,96 @@ class DuarApp {
             style.innerHTML = `
                 .glass-bar-wrapper {
                     pointer-events: auto;
-                    background: rgba(255, 255, 255, 0.03);
-                    backdrop-filter: blur(10px);
-                    -webkit-backdrop-filter: blur(10px);
-                    padding: 4px 12px;
+                    background: rgba(255, 255, 255, 0.05);
+                    backdrop-filter: blur(16px) saturate(180%);
+                    -webkit-backdrop-filter: blur(16px) saturate(180%);
+                    padding: 4px 10px;
                     border-radius: 12px;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1);
                     display: flex;
                     align-items: center;
-                    gap: 8px;
+                    gap: 7px;
                 }
                 .chrome-slider {
                     -webkit-appearance: none;
-                    width: 140px;
+                    width: 120px;
                     height: 2px;
-                    background: rgba(255, 255, 255, 0.1);
+                    background: rgba(255, 255, 255, 0.18);
                     outline: none;
+                    border: none;
                 }
                 .chrome-slider::-webkit-slider-thumb {
                     -webkit-appearance: none;
-                    width: 24px;
+                    width: 22px;
                     height: 12px;
+                    border-radius: 2px;
                     background: #fff;
                     cursor: pointer;
                     border: none;
-                    box-shadow: 0 0 10px rgba(255,255,255,0.3);
+                    box-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
+                    transition: transform 0.1s ease;
                 }
                 .chrome-slider::-webkit-slider-thumb:hover { transform: scale(1.1); }
                 .glass-btn {
-                    background: transparent;
-                    color: rgba(255,255,255,0.3);
-                    border: none;
+                    background: rgba(255, 255, 255, 0.03);
+                    color: rgba(255, 255, 255, 0.65);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-radius: 7px;
                     width: 28px;
                     height: 28px;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    transition: color 0.1s ease;
+                    transition: all 0.15s ease;
                     padding: 0;
                     user-select: none;
                     -webkit-user-select: none;
                     -webkit-touch-callout: none;
+                    position: relative;
                 }
-                .glass-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
-                .glass-btn:hover { color: #fff; }
-                .glass-btn:active { transform: scale(0.95); }
-                .glass-btn { position: relative; }
+                .glass-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+                .glass-btn:hover {
+                    background: rgba(255, 255, 255, 0.12);
+                    border-color: rgba(255, 255, 255, 0.35);
+                    color: #ffffff;
+                }
+                .glass-btn:active {
+                    background: rgba(255, 255, 255, 0.2);
+                    border-color: rgba(255, 255, 255, 0.5);
+                    transform: scale(0.95);
+                }
+                .glass-btn.day-btn {
+                    color: #ffd677;
+                    background: rgba(255, 214, 119, 0.06);
+                    border-color: rgba(255, 214, 119, 0.2);
+                }
+                .glass-btn.day-btn:hover {
+                    color: #fff2b2;
+                    background: rgba(255, 214, 119, 0.16);
+                    border-color: rgba(255, 214, 119, 0.45);
+                    box-shadow: 0 0 10px rgba(255, 214, 119, 0.25);
+                }
+                .glass-btn.day-btn:active {
+                    background: rgba(255, 214, 119, 0.25);
+                    border-color: rgba(255, 214, 119, 0.6);
+                }
+                .glass-btn.night-btn {
+                    color: #99d2ff;
+                    background: rgba(153, 210, 255, 0.06);
+                    border-color: rgba(153, 210, 255, 0.2);
+                }
+                .glass-btn.night-btn:hover {
+                    color: #d0ebff;
+                    background: rgba(153, 210, 255, 0.16);
+                    border-color: rgba(153, 210, 255, 0.45);
+                    box-shadow: 0 0 10px rgba(153, 210, 255, 0.25);
+                }
+                .glass-btn.night-btn:active {
+                    background: rgba(153, 210, 255, 0.25);
+                    border-color: rgba(153, 210, 255, 0.6);
+                }
                 .btn-tip {
                     position: absolute;
                     bottom: calc(100% + 12px);
@@ -444,11 +507,11 @@ class DuarApp {
                     transform: translateX(-50%) translateY(4px);
                     padding: 4px 10px;
                     border-radius: 8px;
-                    background: rgba(20, 20, 24, 0.35);
+                    background: rgba(16, 20, 28, 0.65);
                     backdrop-filter: blur(12px) saturate(160%);
                     -webkit-backdrop-filter: blur(12px) saturate(160%);
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    color: rgba(255, 255, 255, 0.85);
+                    border: 1px solid rgba(255, 255, 255, 0.14);
+                    color: rgba(255, 255, 255, 0.9);
                     font-family: 'Outfit', sans-serif;
                     font-size: 10px;
                     font-weight: 400;
@@ -464,8 +527,9 @@ class DuarApp {
                 .ui-hidden { opacity: 0; transform: translateY(12px); pointer-events: none; }
                 
                 @media (max-width: 480px) {
-                    .chrome-slider { width: 90px; }
-                    .glass-bar-wrapper { gap: 6px; padding: 4px 10px; }
+                    .chrome-slider { width: 85px; }
+                    .glass-bar-wrapper { gap: 5px; padding: 4px 8px; }
+                    .glass-btn { width: 28px; height: 28px; }
                 }
             `;
             document.head.appendChild(style);
@@ -481,7 +545,7 @@ class DuarApp {
 
         const slider = document.createElement('input');
         slider.type = 'range'; slider.className = 'chrome-slider';
-        slider.min = '0'; slider.max = '0.04'; slider.step = '0.0005'; slider.value = '0.02';
+        slider.min = '0'; slider.max = '0.10'; slider.step = '0.001'; slider.value = '0.05';
         slider.oninput = (e) => { this.daySpeed = parseFloat(e.target.value); this.resetUIHideTimer(); };
         ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
 
@@ -529,7 +593,9 @@ class DuarApp {
         }, 'Discover');
 
         const sunBtn = createBtn(icons.day, () => { }, 'Day'); // Click handled by wrapper
+        sunBtn.classList.add('day-btn');
         const moonBtn = createBtn(icons.night, () => { }, 'Night');
+        moonBtn.classList.add('night-btn');
         // Initial color based on default autoRotate = true
         const rotateBtn = createBtn(icons.rotate, () => { }, 'Rotate');
         this.rotateBtn = rotateBtn; // referenced by the rock-click reset in onClick()
@@ -574,8 +640,8 @@ class DuarApp {
                         this.controls.autoRotateSpeed = -0.8; // Gentle CW
                     }
                     if ((btn === sunBtn || btn === moonBtn)) {
-                        this.daySpeed = 0.02; // Reset to normal day speed
-                        slider.value = 0.02;
+                        this.daySpeed = 0; // Stop motion on release
+                        slider.value = '0'; // Slider to very left
                     }
                 }
             };
@@ -609,31 +675,26 @@ class DuarApp {
             }
         });
 
-        // Sun: Hold to max speed day, Tap for Noon
+        // Sun: Hold to accelerate day time-lapse, Click to jump to Noon, stop motion, and set slider to very left (0)
         addLongPressHandler(sunBtn, (t) => {
-            if (this.daySpeed < 0.005) this.daySpeed = 0.005;
-            this.daySpeed = Math.min(0.04, this.daySpeed * 1.1); // Accelerate
+            if (this.daySpeed < 0.01) this.daySpeed = 0.01;
+            this.daySpeed = Math.min(0.10, this.daySpeed * 1.12); // Accelerate
             slider.value = this.daySpeed;
         }, () => {
-            this.sunAngle = Math.PI / 2;
-            this.daySpeed = 0; // Pause at noon
-            slider.value = 0;
+            this.sunAngle = Math.PI / 2; // Noon
+            this.daySpeed = 0;          // Stop motion
+            slider.value = '0';         // Slider to the very left
         });
 
-        // Add explicit release handler logic to reset speed after hold
-        // Since addLongPressHandler doesn't expose onRelease, we'll modify it slightly or add listeners manually
-        // actually, let's update addLongPressHandler to accept onRelease callback
-
-
-        // Moon: Hold to max speed night, Tap for Midnight
+        // Moon: Hold to accelerate night time-lapse, Click to jump to Midnight, stop motion, and set slider to very left (0)
         addLongPressHandler(moonBtn, (t) => {
-            if (this.daySpeed < 0.005) this.daySpeed = 0.005;
-            this.daySpeed = Math.min(0.04, this.daySpeed * 1.1); // Accelerate
+            if (this.daySpeed < 0.01) this.daySpeed = 0.01;
+            this.daySpeed = Math.min(0.10, this.daySpeed * 1.12); // Accelerate
             slider.value = this.daySpeed;
         }, () => {
-            this.sunAngle = 3 * Math.PI / 2;
-            this.daySpeed = 0; // Pause at midnight
-            slider.value = 0;
+            this.sunAngle = 3 * Math.PI / 2; // Midnight
+            this.daySpeed = 0;              // Stop motion
+            slider.value = '0';             // Slider to the very left
         });
 
         // Instagram button: links to @vaveism (shown only in portfolio mode)
@@ -1214,7 +1275,7 @@ class DuarApp {
 
         // Hide reticle & focus popup
         this.activeDoor = null;
-        this.daySpeed = 0.02;    // back to ambient day/night speed
+        this.daySpeed = 0.05;    // back to ambient day/night speed
         this._hideReticle();
         this.setUIVisibility(true); // bring the dock back (door closing / returning to orbit)
 
@@ -1275,15 +1336,15 @@ class DuarApp {
     }
 
     setupLighting() {
-        const ambient = new THREE.AmbientLight(0xffffff, 0.1);
+        const ambient = new THREE.AmbientLight(0xfff5ea, 0.08);
         this.scene.add(ambient);
-        this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x222244, 0.3);
+        this.hemiLight = new THREE.HemisphereLight(0xfff3d8, 0x221c16, 0.28);
         this.scene.add(this.hemiLight);
 
         const shadowRes = this.isMobile ? 1024 : 2048;
 
         this.sunDist = 600;
-        this.sunLight = new THREE.DirectionalLight(0xffddaa, 1.5);
+        this.sunLight = new THREE.DirectionalLight(0xfff2c8, 2.5); // Warmer, slightly yellower and brighter daylight
         this.sunLight.castShadow = true;
         this.sunLight.shadow.mapSize.width = shadowRes;
         this.sunLight.shadow.mapSize.height = shadowRes;
@@ -1295,21 +1356,22 @@ class DuarApp {
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
         this.sunLight.shadow.bias = -0.0001;
-        this.sunLight.shadow.normalBias = 0.02;
-        this.sunLight.shadow.radius = 2;
+        this.sunLight.shadow.normalBias = 0.025;
+        this.sunLight.shadow.radius = 2.4; // Slightly crisper shadow penumbra for deeper core
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
-        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(30, 64, 64), new THREE.MeshStandardMaterial({
+        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(28, 64, 64), new THREE.MeshStandardMaterial({
             map: sunTex,
             emissiveMap: sunTex,
-            emissive: 0xffaa00,
-            emissiveIntensity: 4.5,
+            emissive: 0xffe477,
+            emissiveIntensity: 2.2,
+            roughness: 0.85,
             fog: true
         }));
         this.scene.add(this.sunMesh);
 
-        this.moonLight = new THREE.DirectionalLight(0xaaccff, 2.0);
+        this.moonLight = new THREE.DirectionalLight(0xc8d8e8, 1.4);
         this.moonLight.castShadow = true;
         this.moonLight.shadow.mapSize.width = shadowRes;
         this.moonLight.shadow.mapSize.height = shadowRes;
@@ -1320,17 +1382,17 @@ class DuarApp {
         this.moonLight.shadow.camera.top = 50;
         this.moonLight.shadow.camera.bottom = -50;
         this.moonLight.shadow.bias = -0.0001;
-        this.moonLight.shadow.normalBias = 0.02;
-        this.moonLight.shadow.radius = 2;
+        this.moonLight.shadow.normalBias = 0.025;
+        this.moonLight.shadow.radius = 2.4;
         this.scene.add(this.moonLight);
 
         const moonTex = this.generateMoonTexture();
-        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(20, 64, 64), new THREE.MeshStandardMaterial({
+        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(18, 64, 64), new THREE.MeshStandardMaterial({
             map: moonTex,
             emissiveMap: moonTex,
-            emissive: 0xffffff,
-            emissiveIntensity: 3.0,
-            roughness: 0.9,
+            emissive: 0xe0e8f2,
+            emissiveIntensity: 1.1,
+            roughness: 0.92,
             metalness: 0,
             fog: true
         }));
@@ -1342,24 +1404,19 @@ class DuarApp {
         canvas.width = 1024; canvas.height = 512;
         const ctx = canvas.getContext('2d');
 
-        // Deep solar orange base
-        ctx.fillStyle = '#ff4500';
+        // Warm golden-yellow solar gradient
+        const grad = ctx.createLinearGradient(0, 0, 0, 512);
+        grad.addColorStop(0, '#fffbeb');
+        grad.addColorStop(0.4, '#ffe67c');
+        grad.addColorStop(1, '#ffb833');
+        ctx.fillStyle = grad;
         ctx.fillRect(0, 0, 1024, 512);
 
-        // High contrast plasma granules
-        for (let i = 0; i < 40000; i++) {
-            const x = Math.random() * 1024;
-            const y = Math.random() * 512;
-            const r = Math.random() * 2 + 0.5;
-            const val = Math.random();
-            if (val > 0.98) ctx.fillStyle = '#ffffff'; // Hot spots
-            else if (val > 0.7) ctx.fillStyle = '#ffcc00'; // Bright plasma
-            else if (val > 0.4) ctx.fillStyle = '#ff8c00'; // Mid plasma
-            else ctx.fillStyle = '#8B0000'; // Darker cooler spots (sunspots)
-
-            ctx.globalAlpha = Math.random() * 0.5;
+        // Organic atmospheric turbulence
+        for (let i = 0; i < 300; i++) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${Math.random() * 0.15})`;
             ctx.beginPath();
-            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.arc(Math.random() * 1024, Math.random() * 512, Math.random() * 25, 0, Math.PI * 2);
             ctx.fill();
         }
         return new THREE.CanvasTexture(canvas);
@@ -1370,58 +1427,41 @@ class DuarApp {
         canvas.width = 1024; canvas.height = 512;
         const ctx = canvas.getContext('2d');
 
-        // Lunar grey base
-        ctx.fillStyle = '#d0d0d0';
+        // Natural lunar surface gradient
+        ctx.fillStyle = '#b8c4d2';
         ctx.fillRect(0, 0, 1024, 512);
 
-        // High contrast craters and Maria
-        for (let i = 0; i < 25000; i++) {
+        // Maria and craters
+        for (let i = 0; i < 400; i++) {
             const x = Math.random() * 1024;
             const y = Math.random() * 512;
-            const val = Math.random();
-
-            if (val > 0.85) {
-                // Large Maria (dark basaltic plains)
-                ctx.fillStyle = '#2a2a2a';
-                ctx.globalAlpha = 0.3;
-                ctx.beginPath();
-                ctx.arc(x, y, Math.random() * 80 + 20, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (val > 0.5) {
-                // Small Craters
-                ctx.fillStyle = '#ffffff'; // Rim
-                ctx.globalAlpha = 0.4;
-                const r = Math.random() * 4 + 1;
-                ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-
-                ctx.fillStyle = '#444444'; // Core
-                ctx.beginPath(); ctx.arc(x + 1, y + 1, r * 0.8, 0, Math.PI * 2); ctx.fill();
-            } else {
-                // Surface noise
-                ctx.fillStyle = Math.random() > 0.5 ? '#fcfcfc' : '#888888';
-                ctx.globalAlpha = 0.1;
-                ctx.fillRect(x, y, 2, 2);
-            }
+            const r = Math.random() * 30 + 3;
+            ctx.fillStyle = Math.random() > 0.4 ? '#8a97a8' : '#d2dce6';
+            ctx.globalAlpha = Math.random() * 0.4;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
         }
         return new THREE.CanvasTexture(canvas);
     }
 
     setupEnvironment() {
-        const color = new THREE.Color(0x233242);
+        const color = new THREE.Color(0x273444);
         this.scene.fog = new THREE.FogExp2(color, 0.002);
         this.renderer.setClearColor(color);
 
-        // Large Flat Plane Ground (a tad bit dimmer than original 0x2c3e50)
+        // Large Flat Plane Ground (matte natural earth/stone plane with zero shine/glare)
         const groundGeo = new THREE.PlaneGeometry(5000, 5000, 1, 1);
-        const groundMat = new THREE.MeshStandardMaterial({
-            color: 0x233242,
-            roughness: 0.9,
-            metalness: 0.1,
+        this.groundMat = new THREE.MeshStandardMaterial({
+            color: 0x68645e,
+            roughness: 1.0,
+            metalness: 0.0,
+            envMapIntensity: 0.0,
             polygonOffset: true,
             polygonOffsetFactor: 1, // Push back
             polygonOffsetUnits: 1
         });
-        const ground = new THREE.Mesh(groundGeo, groundMat);
+        const ground = new THREE.Mesh(groundGeo, this.groundMat);
         ground.rotation.x = -Math.PI / 2;
         ground.receiveShadow = true;
         this.scene.add(ground);
@@ -1438,7 +1478,7 @@ class DuarApp {
         const mat = new THREE.ShaderMaterial({
             uniforms: {
                 uSkyColor: { value: new THREE.Color(CONFIG.scene.fog.color) },
-                uGlowColor: { value: new THREE.Color(0x3a4d6b) }, // cool dusky-blue afterglow, not warm/orange
+                uGlowColor: { value: new THREE.Color(0x445366) }, // Subtle natural horizon atmosphere
                 uGlowStrength: { value: 0.0 } // driven by moon height — 0 by day, faint by night
             },
             vertexShader: `
@@ -1563,7 +1603,8 @@ class DuarApp {
         // and blows out to white. Lift the threshold above paint so only genuinely
         // emissive things (sun, moon, the cone's highlight) still glow.
         if (mode === 'portfolio') {
-            gsap.to(this.bloomPass, { threshold: 0.95, strength: 0.55, duration: 0.6 });
+            this.updateRingGeometries(true);
+            gsap.to(this.bloomPass, { threshold: 0.92, strength: 0.20, duration: 0.6 });
             if (this.rock) {
                 gsap.to(this.rock.scale, {
                     x: 0.001, y: 0.001, z: 0.001, duration: 0.4, ease: 'power2.in',
@@ -1576,6 +1617,7 @@ class DuarApp {
                 gsap.to(this.sculpture.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.3)', delay: 0.2 });
             }
         } else {
+            this.updateRingGeometries(false);
             gsap.to(this.bloomPass, {
                 threshold: this._bloomDefaults.threshold,
                 strength: this._bloomDefaults.strength,
@@ -1805,29 +1847,90 @@ class DuarApp {
         group.userData.portalMaterial = portalSurfaceMat;
     }
 
+    // Generates a smooth wavy ring ribbon with exact count of sinusoidal bends around the circumference
+    createWavyRingGeometry(baseRadius, waveCount = 60, amplitude = 0.35, width = 0.25, segments = 720) {
+        const geom = new THREE.BufferGeometry();
+        const positions = [];
+        const uvs = [];
+        const indices = [];
+
+        const halfW = width / 2;
+        for (let i = 0; i <= segments; i++) {
+            const theta = (i / segments) * Math.PI * 2;
+            const wave = Math.sin(theta * waveCount) * amplitude;
+            const rMid = baseRadius + wave;
+            const rIn = rMid - halfW;
+            const rOut = rMid + halfW;
+
+            const cos = Math.cos(theta);
+            const sin = Math.sin(theta);
+
+            // In local XY plane (oriented in world XZ by mesh.rotation.x = -Math.PI / 2)
+            positions.push(cos * rIn, sin * rIn, 0);
+            uvs.push(i / segments, 0);
+
+            positions.push(cos * rOut, sin * rOut, 0);
+            uvs.push(i / segments, 1);
+        }
+
+        for (let i = 0; i < segments; i++) {
+            const in0 = i * 2;
+            const out0 = i * 2 + 1;
+            const in1 = (i + 1) * 2;
+            const out1 = (i + 1) * 2 + 1;
+
+            indices.push(in0, in1, out0);
+            indices.push(out0, in1, out1);
+        }
+
+        geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geom.setIndex(indices);
+        geom.computeVertexNormals();
+        return geom;
+    }
+
+    updateRingGeometries(isPortfolio) {
+        if (!this.rings) return;
+        this.rings.forEach(r => {
+            if (r.mesh.geometry) r.mesh.geometry.dispose();
+            if (isPortfolio) {
+                // In painting mode: 60 wave bends on the exact painting ring radius
+                r.mesh.geometry = this.createWavyRingGeometry(r.radius, 60, 0.20, 0.22, 720);
+            } else {
+                // In default mode: straight circular ring
+                r.mesh.geometry = new THREE.RingGeometry(r.radius - 0.125, r.radius + 0.125, 128);
+            }
+        });
+    }
+
     createSacredGeometry() {
         this.ringMat = new THREE.MeshStandardMaterial({
-            color: 0xaaaaaa,
-            metalness: 1.0,
-            roughness: 0.1,
+            color: 0xffd043,
+            metalness: 0.88,
+            roughness: 0.18,
             side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.9,
-            depthWrite: false,
+            depthWrite: true,
+            depthTest: true,
             polygonOffset: true,
             polygonOffsetFactor: -1,
             polygonOffsetUnits: -1
         });
         this.rings = []; const baseR = 15; const stepR = 8;
+        const isPortfolio = this.viewMode === 'portfolio';
         for (let i = 0; i < 12; i++) {
             const r = baseR + (i * stepR);
-            const mesh = new THREE.Mesh(new THREE.RingGeometry(r - 0.125, r + 0.125, 128), this.ringMat);
+            const geo = isPortfolio
+                ? this.createWavyRingGeometry(r, 60, 0.20, 0.22, 720)
+                : new THREE.RingGeometry(r - 0.125, r + 0.125, 128);
+            const mesh = new THREE.Mesh(geo, this.ringMat);
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.y = 0.03; // Raised slightly to avoid flickering
+            mesh.position.y = 0.002; // Flush on ground
             mesh.receiveShadow = true;
-            mesh.renderOrder = 1;
+            mesh.renderOrder = 0;
             const speed = (i % 2 === 0 ? 1 : -1) * (0.0003 + (i * 0.0001));
-            this.scene.add(mesh); this.rings.push({ mesh, speed });
+            this.scene.add(mesh);
+            this.rings.push({ mesh, speed, radius: r });
         }
     }
 
@@ -1883,8 +1986,8 @@ class DuarApp {
         this.elapsed += dt;
 
         if (this.sunMesh && this.moonMesh) {
-            // Ambient drift: default daySpeed 0.02 → ~12-min full cycle; slider/buttons fast-forward.
-            this.sunAngle += this.daySpeed * 0.436 * dt;
+            // Ambient drift: fast responsive speed scaling for day/night cycle
+            this.sunAngle += this.daySpeed * 6.0 * dt;
             const r = this.sunDist;
             const zPlane = -this.sunDist * 0.4;
 
@@ -1902,10 +2005,10 @@ class DuarApp {
             const mH = Math.max(0, -Math.sin(this.sunAngle));
 
             // Concurrent cross-fade & smart shadow pass (only compute shadow for active celestial light)
-            const isSunActive = sH > 0.04;
-            const isMoonActive = mH > 0.04;
-            this.sunLight.intensity = isSunActive ? (sH * 4.8) : 0;
-            this.moonLight.intensity = isMoonActive ? (mH * 3.2) : 0;
+            const isSunActive = sH > 0.03;
+            const isMoonActive = mH > 0.03;
+            this.sunLight.intensity = isSunActive ? (sH * 1.5) : 0;
+            this.moonLight.intensity = isMoonActive ? (mH * 1.15) : 0;
             this.sunLight.castShadow = isSunActive;
             this.moonLight.castShadow = !isSunActive && isMoonActive;
 
@@ -1917,17 +2020,17 @@ class DuarApp {
                 const sunsetStart = Math.PI - transitionZone;
                 if (angleMod < riseEnd) {
                     const t = 1.0 - (angleMod / riseEnd);
-                    const sunCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xff8833), t);
+                    const sunCol = new THREE.Color(0xfffde8).lerp(new THREE.Color(0xf8b066), t);
                     this.sunMesh.material.color.copy(sunCol);
-                    this.sunLight.color.lerpColors(new THREE.Color(0xffddaa), new THREE.Color(0xff7722), t);
+                    this.sunLight.color.lerpColors(new THREE.Color(0xfff2c8), new THREE.Color(0xf4a75e), t);
                 } else if (angleMod > sunsetStart) {
                     const t = (angleMod - sunsetStart) / transitionZone;
-                    const sunCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xff8833), t);
+                    const sunCol = new THREE.Color(0xfffde8).lerp(new THREE.Color(0xf8b066), t);
                     this.sunMesh.material.color.copy(sunCol);
-                    this.sunLight.color.lerpColors(new THREE.Color(0xffddaa), new THREE.Color(0xff7722), t);
+                    this.sunLight.color.lerpColors(new THREE.Color(0xfff2c8), new THREE.Color(0xf4a75e), t);
                 } else {
-                    this.sunMesh.material.color.set(0xffffff);
-                    this.sunLight.color.set(0xffddaa);
+                    this.sunMesh.material.color.set(0xfffde8);
+                    this.sunLight.color.set(0xfff2c8);
                 }
             }
 
@@ -1936,35 +2039,69 @@ class DuarApp {
                 const moonSetStart = (Math.PI * 2) - transitionZone;
                 if (angleMod < riseEnd) {
                     const t = 1.0 - ((angleMod - Math.PI) / transitionZone);
-                    const moonCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xd0e0ff), t);
+                    const moonCol = new THREE.Color(0xe6edf5).lerp(new THREE.Color(0xc2d2e2), t);
                     this.moonMesh.material.color.copy(moonCol);
                     this.moonMesh.material.emissive.copy(moonCol);
+                    this.moonLight.color.lerpColors(new THREE.Color(0xc8d8e8), new THREE.Color(0xb0c5da), t);
                 } else if (angleMod > moonSetStart) {
                     const t = (angleMod - moonSetStart) / transitionZone;
-                    const moonCol = new THREE.Color(0xffffff).lerp(new THREE.Color(0xd0e0ff), t);
+                    const moonCol = new THREE.Color(0xe6edf5).lerp(new THREE.Color(0xc2d2e2), t);
                     this.moonMesh.material.color.copy(moonCol);
                     this.moonMesh.material.emissive.copy(moonCol);
+                    this.moonLight.color.lerpColors(new THREE.Color(0xc8d8e8), new THREE.Color(0xb0c5da), t);
                 } else {
-                    this.moonMesh.material.color.set(0xffffff);
-                    this.moonMesh.material.emissive.set(0xffffff);
+                    this.moonMesh.material.color.set(0xe6edf5);
+                    this.moonMesh.material.emissive.set(0xe0e8f2);
+                    this.moonLight.color.set(0xc8d8e8);
                 }
             }
 
-            const dayColor = new THREE.Color(0x233242);
-            const nightColor = new THREE.Color(0x050510);
+            // Natural atmospheric sky progression: open day sky -> dusk twilight -> luminous starlit night
+            const dayColor = new THREE.Color(0x273444);
+            const nightColor = new THREE.Color(0x131a26);
             const currColor = new THREE.Color(0x000000);
             currColor.lerp(dayColor, sH);
-            currColor.lerp(nightColor, mH * 0.4);
+            currColor.lerp(nightColor, mH * 0.55);
 
             this.scene.background = currColor;
             if (this.scene.fog) this.scene.fog.color = currColor;
-            this.hemiLight.intensity = 0.15 + (sH * 0.3) + (mH * 0.15);
-            this.hemiLight.color.lerpColors(new THREE.Color(0x4444ff), new THREE.Color(0xffffff), sH);
 
-            // Subtle horizon afterglow: fades in with the moon, invisible during the day.
+            // Ambient sky & earth bounce light: maintains ground and sculpture visibility while keeping shadows deep
+            this.hemiLight.intensity = 0.10 + (sH * 0.20) + (mH * 0.16);
+            this.hemiLight.color.lerpColors(new THREE.Color(0x35455d), new THREE.Color(0xfcf2d4), sH);
+            this.hemiLight.groundColor.lerpColors(new THREE.Color(0x10151f), new THREE.Color(0x241f18), sH);
+
+            // Subtle horizon atmosphere
             if (this.skyDome) {
                 this.skyDome.material.uniforms.uSkyColor.value.copy(currColor);
-                this.skyDome.material.uniforms.uGlowStrength.value = mH * 0.18;
+                this.skyDome.material.uniforms.uGlowStrength.value = 0.12 + (mH * 0.25);
+            }
+
+            // Real-time floor color transition: Peak daytime -> Off-white; Midnight -> Royal navy blue
+            if (this.groundMat) {
+                const _offWhite = new THREE.Color(0x68645e);     // Peak Daytime: Soft matte off-white (clear, non-blinding)
+                const _twilightBlue = new THREE.Color(0x202834); // Sunset: Twilight Slate Blue
+                const _royalNavy = new THREE.Color(0x0a1424);    // Midnight: Royal Navy Blue
+                const _dawnSlate = new THREE.Color(0x323034);    // Sunrise: Dawn Slate
+                const Q = Math.PI / 2;
+
+                if (angleMod >= 0 && angleMod < Q) {
+                    // Sunrise -> Noon (Dawn Slate -> Off-White)
+                    const t = angleMod / Q;
+                    this.groundMat.color.lerpColors(_dawnSlate, _offWhite, t);
+                } else if (angleMod >= Q && angleMod < Math.PI) {
+                    // Noon -> Sunset (Off-White -> Twilight Slate Blue)
+                    const t = (angleMod - Q) / Q;
+                    this.groundMat.color.lerpColors(_offWhite, _twilightBlue, t);
+                } else if (angleMod >= Math.PI && angleMod < Math.PI * 1.5) {
+                    // Sunset -> Midnight (Twilight Slate Blue -> Royal Navy Blue)
+                    const t = (angleMod - Math.PI) / Q;
+                    this.groundMat.color.lerpColors(_twilightBlue, _royalNavy, t);
+                } else {
+                    // Midnight -> Sunrise (Royal Navy Blue -> Dawn Slate)
+                    const t = (angleMod - Math.PI * 1.5) / Q;
+                    this.groundMat.color.lerpColors(_royalNavy, _dawnSlate, t);
+                }
             }
         }
         if (this.rings) this.rings.forEach(r => r.mesh.rotation.z += r.speed);
@@ -1978,6 +2115,9 @@ class DuarApp {
             this.sculpture.position.y = 0;
             this.sculpture.rotation.y = this.time * 0.25;
         }
+
+        // Real-time 4-stage frame and ground circles material phasing (Gold -> Silver -> Metallic Black -> Bronze)
+        updatePaintingFramesMaterial(this.sunAngle, this.ringMat);
 
         // Progressive proximity texture streaming (prevents VRAM spikes and thermal throttling)
         if (this.viewMode === 'portfolio' && (!this._lastTexCheck || nowMs - this._lastTexCheck > 250)) {

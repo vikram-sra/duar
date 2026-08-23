@@ -17,8 +17,8 @@ export function createCeramicSculpture(loadingManager) {
     hitbox.name = 'SculptureHitbox';
     group.add(hitbox);
 
-    // Warm gallery accent glow to accentuate the interior ceramic details
-    const internalGlow = new THREE.PointLight(0xffb84d, 1.4, 7.0, 1.8);
+    // Subtle warm interior ceramic warmth
+    const internalGlow = new THREE.PointLight(0xf5c088, 0.65, 5.0, 2.0);
     internalGlow.position.set(0.2, 2.2, 0.3);
     group.add(internalGlow);
 
@@ -50,9 +50,9 @@ export function createCeramicSculpture(loadingManager) {
                     child.castShadow = true;
                     child.receiveShadow = true;
                     if (child.material) {
-                        child.material.roughness = Math.min(child.material.roughness ?? 0.35, 0.45);
-                        child.material.metalness = Math.max(child.material.metalness ?? 0.15, 0.15);
-                        child.material.envMapIntensity = 1.3;
+                        child.material.roughness = 0.48;
+                        child.material.metalness = 0.04;
+                        child.material.envMapIntensity = 0.8;
                     }
                 }
             });
