@@ -16,6 +16,14 @@ import {
 import { createCeramicSculpture } from './src/portfolio/sculpture.js';
 import { createTorontoSkySystem, calculateTorontoSunMoon } from './src/sky/celestial.js';
 
+// Floor ring ribbon. Door mode and paintings mode are the same geometry at different wave
+// amplitudes, which lets switchView morph between them instead of swapping buffers.
+const RING_SEGMENTS = 720;
+const RING_WAVE_COUNT = 60;
+const RING_WAVE_AMPLITUDE = 0.20;
+const RING_WIDTH_FLAT = 0.25;
+const RING_WIDTH_WAVY = 0.22;
+
 const CONFIG = {
     "scene": {
         "fog": { "color": "#273444", "near": 25, "far": 120 },
@@ -278,7 +286,7 @@ class DuarApp {
     }
 
     init() {
-        this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 2500);
+        this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 6000);
         this.camera.position.set(0, 3.0, 28.5);
         this.camera.lookAt(0, 1.6, 0);
 
@@ -392,7 +400,7 @@ class DuarApp {
         const now = new Date();
         const hours = now.getHours() + now.getMinutes() / 60;
         this.sunAngle = ((hours - 6) / 24) * Math.PI * 2;
-        this.daySpeed = 0.05;
+        this.daySpeed = 0.025;
 
         // Fallback: dismiss the intro overlays if the user hasn't interacted yet.
         setTimeout(() => this.dismissIntro(), 14000);
@@ -546,7 +554,7 @@ class DuarApp {
 
         const slider = document.createElement('input');
         slider.type = 'range'; slider.className = 'chrome-slider';
-        slider.min = '0'; slider.max = '0.10'; slider.step = '0.001'; slider.value = '0.05';
+        slider.min = '0'; slider.max = '0.10'; slider.step = '0.001'; slider.value = '0.025';
         slider.oninput = (e) => { this.daySpeed = parseFloat(e.target.value); this.resetUIHideTimer(); };
         ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
 
@@ -598,7 +606,7 @@ class DuarApp {
         const moonBtn = createBtn(icons.night, () => { }, 'Night');
         moonBtn.classList.add('night-btn');
         // Initial color based on default autoRotate = true
-        const rotateBtn = createBtn(icons.rotate, () => { }, 'Rotate');
+        const rotateBtn = createBtn(icons.rotate, () => { }, 'Rotate · Hold to go wuuuuu');
         this.rotateBtn = rotateBtn; // referenced by the rock-click reset in onClick()
         rotateBtn.style.color = '#fff';
 
@@ -1276,7 +1284,7 @@ class DuarApp {
 
         // Hide reticle & focus popup
         this.activeDoor = null;
-        this.daySpeed = 0.05;    // back to ambient day/night speed
+        this.daySpeed = 0.025;    // back to ambient day/night speed
         this._hideReticle();
         this.setUIVisibility(true); // bring the dock back (door closing / returning to orbit)
 
@@ -1337,20 +1345,20 @@ class DuarApp {
     }
 
     setupLighting() {
-        const ambient = new THREE.AmbientLight(0xfff5ea, 0.08);
+        const ambient = new THREE.AmbientLight(0xfff5ea, 0.05);
         this.scene.add(ambient);
         this.hemiLight = new THREE.HemisphereLight(0xfff3d8, 0x221c16, 0.28);
         this.scene.add(this.hemiLight);
 
         const shadowRes = this.isMobile ? 512 : 1536;
 
-        this.sunDist = 650;
+        this.sunDist = 1600;
         this.sunLight = new THREE.DirectionalLight(0xfff2c8, 2.5); // Warmer, slightly yellower and brighter daylight
         this.sunLight.castShadow = true;
         this.sunLight.shadow.mapSize.width = shadowRes;
         this.sunLight.shadow.mapSize.height = shadowRes;
         this.sunLight.shadow.camera.near = 0.5;
-        this.sunLight.shadow.camera.far = 800;
+        this.sunLight.shadow.camera.far = 1000;
         const d = 50;
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
@@ -1362,7 +1370,7 @@ class DuarApp {
         this.scene.add(this.sunLight);
 
         const sunTex = this.generateSunTexture();
-        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(24, 32, 32), new THREE.MeshStandardMaterial({
+        this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(44, 32, 32), new THREE.MeshStandardMaterial({
             map: sunTex,
             emissiveMap: sunTex,
             emissive: 0xffe477,
@@ -1377,7 +1385,7 @@ class DuarApp {
         this.moonLight.shadow.mapSize.width = shadowRes;
         this.moonLight.shadow.mapSize.height = shadowRes;
         this.moonLight.shadow.camera.near = 0.5;
-        this.moonLight.shadow.camera.far = 800;
+        this.moonLight.shadow.camera.far = 1000;
         this.moonLight.shadow.camera.left = -50;
         this.moonLight.shadow.camera.right = 50;
         this.moonLight.shadow.camera.top = 50;
@@ -1388,7 +1396,7 @@ class DuarApp {
         this.scene.add(this.moonLight);
 
         const moonTex = this.generateMoonTexture();
-        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(16, 32, 32), new THREE.MeshStandardMaterial({
+        this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(30, 32, 32), new THREE.MeshStandardMaterial({
             map: moonTex,
             emissiveMap: moonTex,
             emissive: 0xe0e8f2,
@@ -1451,8 +1459,8 @@ class DuarApp {
         this.scene.fog = new THREE.FogExp2(color, 0.002);
         this.renderer.setClearColor(color);
 
-        // Large Flat Plane Ground (matte natural earth/stone plane with zero shine/glare)
-        const groundGeo = new THREE.PlaneGeometry(5000, 5000, 1, 1);
+        // Circular Ground Plane (matte natural earth/stone plane with zero square clipping edges)
+        const groundGeo = new THREE.CircleGeometry(1200, 64);
         this.groundMat = new THREE.MeshStandardMaterial({
             color: 0x68645e,
             roughness: 1.0,
@@ -1469,7 +1477,7 @@ class DuarApp {
 
         this.createSacredGeometry();
         this.createCentralRock();
-        this.skySystem = createTorontoSkySystem(850, this.isMobile);
+        this.skySystem = createTorontoSkySystem(1800, this.isMobile);
         this.scene.add(this.skySystem.skyRoot);
     }
 
@@ -1853,18 +1861,49 @@ class DuarApp {
         return geom;
     }
 
+    // Rewrites a ring's existing vertex buffer in place for a given wave blend.
+    // waveT 0 = straight circle (door mode), 1 = full sinusoidal ribbon (paintings mode).
+    // Every vertex stays in the local XY plane, so the flat normals computed at build time
+    // remain correct and never need recomputing.
+    writeRingWave(entry, waveT) {
+        const attr = entry.mesh.geometry.getAttribute('position');
+        const arr = attr.array;
+        const segments = entry.segments;
+        const amplitude = RING_WAVE_AMPLITUDE * waveT;
+        const halfW = (RING_WIDTH_FLAT + (RING_WIDTH_WAVY - RING_WIDTH_FLAT) * waveT) / 2;
+
+        let p = 0;
+        for (let i = 0; i <= segments; i++) {
+            const theta = (i / segments) * Math.PI * 2;
+            const rMid = entry.radius + Math.sin(theta * RING_WAVE_COUNT) * amplitude;
+            const cos = Math.cos(theta);
+            const sin = Math.sin(theta);
+            const rIn = rMid - halfW;
+            const rOut = rMid + halfW;
+
+            arr[p++] = cos * rIn; arr[p++] = sin * rIn; arr[p++] = 0;
+            arr[p++] = cos * rOut; arr[p++] = sin * rOut; arr[p++] = 0;
+        }
+        attr.needsUpdate = true;
+    }
+
     updateRingGeometries(isPortfolio) {
         if (!this.rings) return;
-        this.rings.forEach(r => {
-            if (r.mesh.geometry) r.mesh.geometry.dispose();
-            if (isPortfolio) {
-                // In painting mode: 60 wave bends on the exact painting ring radius
-                r.mesh.geometry = this.createWavyRingGeometry(r.radius, 60, 0.20, 0.22, 720);
-            } else {
-                // In default mode: straight circular ring
-                r.mesh.geometry = new THREE.RingGeometry(r.radius - 0.125, r.radius + 0.125, 128);
-            }
-        });
+        const target = isPortfolio ? 1 : 0;
+
+        // Interrupting a half-finished switch must retarget from wherever each ring currently is,
+        // so kill the old tweens rather than letting two of them fight over the same buffer.
+        if (this._ringWaveTweens) this._ringWaveTweens.forEach(t => t.kill());
+
+        this._ringWaveTweens = this.rings.map((entry, i) => gsap.to(entry, {
+            waveT: target,
+            duration: 1.1,
+            // Staggered by ring index so the change ripples outward from the centre rather than
+            // every ring snapping together.
+            delay: i * 0.055,
+            ease: 'power2.inOut',
+            onUpdate: () => this.writeRingWave(entry, entry.waveT)
+        }));
     }
 
     createSacredGeometry() {
@@ -1883,17 +1922,21 @@ class DuarApp {
         const isPortfolio = this.viewMode === 'portfolio';
         for (let i = 0; i < 12; i++) {
             const r = baseR + (i * stepR);
-            const geo = isPortfolio
-                ? this.createWavyRingGeometry(r, 60, 0.20, 0.22, 720)
-                : new THREE.RingGeometry(r - 0.125, r + 0.125, 128);
+            // Both modes share one ribbon buffer so switching can morph the vertices rather than
+            // swap geometries; a straight ring is just this same ribbon at zero wave amplitude.
+            const waveT = isPortfolio ? 1 : 0;
+            const geo = this.createWavyRingGeometry(
+                r, RING_WAVE_COUNT, RING_WAVE_AMPLITUDE * waveT,
+                RING_WIDTH_FLAT + (RING_WIDTH_WAVY - RING_WIDTH_FLAT) * waveT, RING_SEGMENTS
+            );
             const mesh = new THREE.Mesh(geo, this.ringMat);
             mesh.rotation.x = -Math.PI / 2;
             mesh.position.y = 0.002; // Flush on ground
             mesh.receiveShadow = true;
             mesh.renderOrder = 0;
-            const speed = (i % 2 === 0 ? 1 : -1) * (0.0003 + (i * 0.0001));
+            const speed = (i % 2 === 0 ? 1 : -1) * (0.00006 + (i * 0.00002));
             this.scene.add(mesh);
-            this.rings.push({ mesh, speed, radius: r });
+            this.rings.push({ mesh, speed, radius: r, segments: RING_SEGMENTS, waveT });
         }
     }
 
@@ -1955,10 +1998,14 @@ class DuarApp {
             // Calculate astronomically accurate Toronto solar & lunar coordinates for August
             const sky = this.skySystem.update(this.sunAngle, this.elapsed, this.sunDist);
 
-            this.sunLight.position.copy(sky.cel.sunPos);
             this.sunMesh.position.copy(sky.cel.sunPos);
-            this.moonLight.position.copy(sky.cel.moonPos);
             this.moonMesh.position.copy(sky.cel.moonPos);
+
+            // Light position placed at ~350m along exact same direction vector for high shadow precision
+            const sunDir = sky.cel.sunPos.clone().normalize();
+            const moonDir = sky.cel.moonPos.clone().normalize();
+            this.sunLight.position.copy(sunDir.multiplyScalar(350));
+            this.moonLight.position.copy(moonDir.multiplyScalar(350));
 
             this.moonMesh.lookAt(0, 0, 0);
 
@@ -2017,11 +2064,11 @@ class DuarApp {
             }
 
             // Atmospheric sky progression & horizon color grading
-            const dayZenith = new THREE.Color(0x28568a); // Rich, vibrant, bright daylight blue
-            const dayHorizon = new THREE.Color(0x5682ad); // Crisp daylight horizon blue
+            const dayZenith = new THREE.Color(0x1a4674); // Radiant deep daylight blue
+            const dayHorizon = new THREE.Color(0x4c78a6); // Atmospheric horizon blue
 
-            const sunsetZenith = new THREE.Color(0x181422);
-            const sunsetHorizon = new THREE.Color(0x7e3a18);
+            const sunsetZenith = new THREE.Color(0x1c182c);
+            const sunsetHorizon = new THREE.Color(0xb85220);
 
             const nightZenith = new THREE.Color(0x000000);
             const nightHorizon = new THREE.Color(0x000000);
@@ -2051,7 +2098,7 @@ class DuarApp {
             if (this.scene.fog) this.scene.fog.color.copy(horizCol);
 
             // Ambient sky & earth bounce light: maintains ground and sculpture visibility while keeping shadows deep
-            this.hemiLight.intensity = 0.10 + (sky.sH * 0.20) + (sky.mH * 0.16);
+            this.hemiLight.intensity = 0.07 + (sky.sH * 0.15) + (sky.mH * 0.12);
             this.hemiLight.color.lerpColors(new THREE.Color(0x35455d), new THREE.Color(0xfcf2d4), sky.sH);
             this.hemiLight.groundColor.lerpColors(new THREE.Color(0x10151f), new THREE.Color(0x241f18), sky.sH);
 
@@ -2086,12 +2133,17 @@ class DuarApp {
         if (this.rock && this.rock.visible) {
             // Base sits flush on the ground (cone geometry base is at local y=0)
             this.rock.position.y = 0;
-            // Slowly rotating
-            this.rock.rotation.y = this.time * 0.5;
+            // Keep center rock facing camera on rotation
+            this.rock.lookAt(this.camera.position.x, this.rock.position.y, this.camera.position.z);
         }
         if (this.sculpture && this.sculpture.visible) {
             this.sculpture.position.y = 0;
-            this.sculpture.rotation.y = this.time * 0.25;
+            // Keep center sculpture facing camera on rotation
+            this.sculpture.lookAt(this.camera.position.x, this.sculpture.position.y, this.camera.position.z);
+        }
+        if (this.activeDoor && this.activeDoor.group) {
+            // Keep focused center object facing camera on rotation
+            this.activeDoor.group.lookAt(this.camera.position.x, this.activeDoor.group.position.y, this.camera.position.z);
         }
 
         // Real-time 4-stage frame and ground circles material phasing (Gold -> Silver -> Metallic Black -> Bronze)

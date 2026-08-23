@@ -10,16 +10,16 @@ export function createCeramicSculpture(loadingManager) {
     group.name = 'CenterSculpture';
 
     // Interaction hitbox scaled to match centerpiece
-    const hitGeo = new THREE.CylinderGeometry(2.4, 2.8, 5.0, 16);
-    hitGeo.translate(0, 2.5, 0);
+    const hitGeo = new THREE.CylinderGeometry(1.8, 2.1, 3.8, 16);
+    hitGeo.translate(0, 1.9, 0);
     const hitMat = new THREE.MeshBasicMaterial({ visible: false });
     const hitbox = new THREE.Mesh(hitGeo, hitMat);
     hitbox.name = 'SculptureHitbox';
     group.add(hitbox);
 
     // Subtle warm interior ceramic warmth
-    const internalGlow = new THREE.PointLight(0xf5c088, 0.65, 5.0, 2.0);
-    internalGlow.position.set(0.2, 2.2, 0.3);
+    const internalGlow = new THREE.PointLight(0xf5c088, 0.65, 4.0, 2.0);
+    internalGlow.position.set(0.15, 1.7, 0.2);
     group.add(internalGlow);
 
     // Load the scanned .glb model
@@ -35,8 +35,8 @@ export function createCeramicSculpture(loadingManager) {
             const size = bbox.getSize(new THREE.Vector3());
             const center = bbox.getCenter(new THREE.Vector3());
 
-            // Monumental centerpiece height (~4.8m tall)
-            const targetHeight = 4.8;
+            // Gallery centerpiece height (reduced 25% to ~3.6m tall)
+            const targetHeight = 3.6;
             const scaleFactor = targetHeight / (size.y || 1.0);
 
             // Center horizontally and ensure base is flush/touching the ground plane (y = 0)
