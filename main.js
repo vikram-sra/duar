@@ -532,7 +532,11 @@ class DuarApp {
                     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
                 }
                 .glass-btn:hover .btn-tip,
-                .glass-btn .btn-tip.tip-visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+                .glass-btn .btn-tip.tip-visible,
+                .slider-wrapper:hover .btn-tip,
+                .slider-wrapper .btn-tip.tip-visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+                .slider-wrapper { position: relative; display: inline-flex; align-items: center; }
+                .slider-wrapper .btn-tip { left: 50%; transform: translateX(-50%) translateY(4px); }
                 .ui-hidden { opacity: 0; transform: translateY(12px); pointer-events: none; }
                 
                 @media (max-width: 480px) {
@@ -555,8 +559,22 @@ class DuarApp {
         const slider = document.createElement('input');
         slider.type = 'range'; slider.className = 'chrome-slider';
         slider.min = '0'; slider.max = '0.10'; slider.step = '0.001'; slider.value = '0.025';
+        slider.setAttribute('aria-label', 'Speed up time');
         slider.oninput = (e) => { this.daySpeed = parseFloat(e.target.value); this.resetUIHideTimer(); };
         ['pointerdown', 'touchstart', 'touchmove'].forEach(ev => slider.addEventListener(ev, e => { e.stopPropagation(); this.resetUIHideTimer(); }));
+
+        const sliderWrapper = document.createElement('div');
+        sliderWrapper.className = 'slider-wrapper';
+        const sliderTip = document.createElement('span');
+        sliderTip.className = 'btn-tip';
+        sliderTip.textContent = 'Speed up time';
+        sliderWrapper.append(slider, sliderTip);
+        let sliderTipTimeout;
+        slider.addEventListener('touchstart', () => {
+            sliderTip.classList.add('tip-visible');
+            clearTimeout(sliderTipTimeout);
+            sliderTipTimeout = setTimeout(() => sliderTip.classList.remove('tip-visible'), 1400);
+        }, { passive: true });
 
         const icons = {
             home: `<svg viewBox="0 0 24 24"><path d="M12 3L3 12L12 21L21 12L12 3Z"/></svg>`, // Diamond
@@ -564,6 +582,8 @@ class DuarApp {
             day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 1v1.5M12 21.5V23M1 12h1.5M21.5 12H23"/></svg>`, // Minimalist Sun
             night: `<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`, // Minimal Crescent
             rotate: `<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>`, // Loop Icon
+            art: `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`, // Art Gallery Frame Icon
+            duar: `<svg viewBox="0 0 24 24"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16h14zM9 5h6v14H9V5zm4 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>`, // Door Icon
             instagram: `<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>`
         };
 
@@ -706,6 +726,27 @@ class DuarApp {
             slider.value = '0';             // Slider to the very left
         });
 
+        // Art / Duar switch button in dock before instagram icon
+        const modeBtn = createBtn(
+            this.viewMode === 'portfolio' ? icons.duar : icons.art,
+            async () => {
+                const nextMode = this.viewMode === 'portfolio' ? 'default' : 'portfolio';
+                await this.switchView(nextMode);
+            },
+            this.viewMode === 'portfolio' ? 'Duar' : 'Art'
+        );
+        this.dockModeBtn = modeBtn;
+        this.updateDockModeBtn = () => {
+            const isArt = this.viewMode === 'portfolio';
+            modeBtn.innerHTML = isArt ? icons.duar : icons.art;
+            const label = isArt ? 'Duar' : 'Art';
+            modeBtn.setAttribute('aria-label', label);
+            const tip = document.createElement('span');
+            tip.className = 'btn-tip';
+            tip.textContent = label;
+            modeBtn.appendChild(tip);
+        };
+
         // Instagram button: links to @vaveism (shown only in portfolio mode)
         const instaBtn = createBtn(icons.instagram, () => {
             window.open('https://instagram.com/vaveism', '_blank', 'noopener,noreferrer');
@@ -713,7 +754,7 @@ class DuarApp {
         this.instaBtn = instaBtn;
         instaBtn.style.display = this.viewMode === 'portfolio' ? 'inline-flex' : 'none';
 
-        wrapper.append(homeBtn, randBtn, sunBtn, slider, moonBtn, rotateBtn, instaBtn);
+        wrapper.append(homeBtn, randBtn, sunBtn, sliderWrapper, moonBtn, rotateBtn, modeBtn, instaBtn);
         container.appendChild(wrapper);
         document.body.appendChild(container);
 
@@ -1569,6 +1610,13 @@ class DuarApp {
         if (this.instaBtn) {
             this.instaBtn.style.display = mode === 'portfolio' ? 'inline-flex' : 'none';
         }
+        if (this.updateDockModeBtn) {
+            this.updateDockModeBtn();
+        }
+        if (this.viewToggle) {
+            this.viewToggle.textContent = mode === 'default' ? 'Paintings' : 'Doors';
+            this.viewToggle.setAttribute('aria-label', mode === 'default' ? 'Switch to paintings' : 'Switch to doors');
+        }
 
         // Paintings are unlit and untone-mapped, so their pixels reach the bloom pass
         // at full value — against the default 0.2 threshold the entire artwork blooms
@@ -1576,6 +1624,9 @@ class DuarApp {
         // emissive things (sun, moon, the cone's highlight) still glow.
         if (mode === 'portfolio') {
             this.updateRingGeometries(true);
+            this.doors.forEach((d) => {
+                if (d.isPainting) loadPaintingTexture(d);
+            });
             gsap.to(this.bloomPass, { threshold: 0.92, strength: 0.20, duration: 0.6 });
             if (this.rock) {
                 gsap.to(this.rock.scale, {
@@ -1691,9 +1742,8 @@ class DuarApp {
             this.doors.push(doorObj);
         });
 
-        // Progressive streaming: load the immediate 8 closest paintings on start
-        const byDistance = this.doors.slice().sort((a, b) => a.radius - b.radius);
-        byDistance.slice(0, 8).forEach((door) => loadPaintingTexture(door));
+        // Eagerly load all painting textures so none appear black
+        this.doors.forEach((door) => loadPaintingTexture(door));
 
         // Start initial view framing the first painting in zoomed-out focus
         if (!this.activeDoor && this.viewMode === 'portfolio') {
@@ -1941,17 +1991,47 @@ class DuarApp {
     }
 
     createCentralRock() {
-        const geo = new THREE.ConeGeometry(1.5, 3.0, 64, 32); geo.translate(0, 1.5, 0);
+        const geo = new THREE.CylinderGeometry(0.0001, 1.5, 3.0, 128, 1, false);
+        geo.translate(0, 1.5, 0);
         const mat = new THREE.MeshStandardMaterial({
             color: 0xffffff,
-            roughness: 0.05,
-            metalness: 1.0,
+            metalness: 0.95,
+            roughness: 0.10,
             envMapIntensity: 1.0
         });
         this.rock = new THREE.Mesh(geo, mat);
         this.rock.castShadow = true;
         this.rock.receiveShadow = true;
+        this.rock.position.y = 0;
         this.rock.visible = false;
+
+        // Ground contact shadow under cone base
+        const shadowGeo = new THREE.PlaneGeometry(3.6, 3.6);
+        const shadowCanvas = document.createElement('canvas');
+        shadowCanvas.width = 128; shadowCanvas.height = 128;
+        const ctx = shadowCanvas.getContext('2d');
+        const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+        grad.addColorStop(0, 'rgba(0, 0, 0, 0.94)');
+        grad.addColorStop(0.35, 'rgba(0, 0, 0, 0.70)');
+        grad.addColorStop(0.70, 'rgba(0, 0, 0, 0.25)');
+        grad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 128, 128);
+        const shadowMat = new THREE.MeshBasicMaterial({
+            map: new THREE.CanvasTexture(shadowCanvas),
+            transparent: true,
+            opacity: 0.92,
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2
+        });
+        const rockShadow = new THREE.Mesh(shadowGeo, shadowMat);
+        rockShadow.rotation.x = -Math.PI / 2;
+        rockShadow.position.y = 0.003;
+        rockShadow.renderOrder = 1;
+        this.rock.add(rockShadow);
+
         this.scene.add(this.rock);
 
         // Center ceramic sculpture for paintings / portfolio mode
@@ -2131,19 +2211,35 @@ class DuarApp {
         }
         if (this.rings) this.rings.forEach(r => r.mesh.rotation.z += r.speed);
         if (this.rock && this.rock.visible) {
-            // Base sits flush on the ground (cone geometry base is at local y=0)
             this.rock.position.y = 0;
-            // Keep center rock facing camera on rotation
-            this.rock.lookAt(this.camera.position.x, this.rock.position.y, this.camera.position.z);
+            this.rock.rotation.set(0, 0, 0); // Locked to ground
         }
         if (this.sculpture && this.sculpture.visible) {
             this.sculpture.position.y = 0;
-            // Keep center sculpture facing camera on rotation
-            this.sculpture.lookAt(this.camera.position.x, this.sculpture.position.y, this.camera.position.z);
-        }
-        if (this.activeDoor && this.activeDoor.group) {
-            // Keep focused center object facing camera on rotation
-            this.activeDoor.group.lookAt(this.camera.position.x, this.activeDoor.group.position.y, this.camera.position.z);
+            this.sculpture.rotation.set(0, 0, 0); // Locked into ground
+
+            // Dynamic red thread jiggle physics linked to camera orbit and motion
+            if (this.sculpture.userData && this.sculpture.userData.threadUniforms) {
+                const u = this.sculpture.userData.threadUniforms;
+                u.uTime.value = this.time;
+
+                const curCamAngle = Math.atan2(this.camera.position.x, this.camera.position.z);
+                if (this._lastCamAngle === undefined) this._lastCamAngle = curCamAngle;
+                let dAngle = curCamAngle - this._lastCamAngle;
+                while (dAngle > Math.PI) dAngle -= Math.PI * 2;
+                while (dAngle < -Math.PI) dAngle += Math.PI * 2;
+                this._lastCamAngle = curCamAngle;
+
+                const angularSpeed = Math.abs(dAngle) / Math.max(0.001, dt);
+                if (this._threadMotion === undefined) this._threadMotion = 0;
+                const targetMotion = Math.min(3.5, angularSpeed * 1.5);
+                this._threadMotion = THREE.MathUtils.lerp(this._threadMotion, targetMotion, 0.14);
+
+                const tanX = -Math.cos(curCamAngle);
+                const tanZ = Math.sin(curCamAngle);
+                u.uMotion.value = this._threadMotion;
+                u.uDir.value.set(tanX, tanZ);
+            }
         }
 
         // Real-time 4-stage frame and ground circles material phasing (Gold -> Silver -> Metallic Black -> Bronze)
