@@ -1,0 +1,118 @@
+{
+  "_comment": "Everything the flat /work and /about pages say. Edit this file, run `npm run portfolio`, and the pages regenerate. Source: portfolio/CV/CV plus the origin details you supplied. The statement is your writing, cut for repetition and filler; the opening paragraph is the biography stated plainly rather than implied.",
+  "artist": "Vikram Sra",
+  "practice": "Duar",
+  "gurmukhi": "ਦੁਆਰ",
+  "contactEmail": "sravikramjit@gmail.com",
+  "instagram": "vaveism",
+  "location": "Toronto",
+  "_phoneNote": "Your CV lists +1 (647) 765-9466. Deliberately NOT published - a phone number on a public page gets scraped, and a curator will email. Say the word if you want it on.",
+  "_siteNote": "Your CV gives the site as vikramsra.duar.one, but it is live at duar.one. Fix whichever is wrong.",
+  "statement": {
+    "short": "I am a Sikh Punjabi painter, born and raised in Punjab. I changed countries at eighteen and have worked in Toronto since. I paint the formless spaces within — the worlds that stay hidden until someone gives them the quiet attention they need to take shape.",
+    "medium": "I am a Sikh Punjabi painter, born and raised in Punjab. I changed countries at eighteen and have painted in Toronto ever since, mostly in oil, mostly self-taught.\n\nI paint the formless spaces within: the worlds that stay hidden until someone gives them the quiet attention they need to take shape. What I am after is the part we cannot see with our eyes. The heavy architecture of love and hope. The sharp edges of hate and despair. The presence of both God and the demons we carry.\n\nI take the measure of those things from watching people move across land, and from what the moving does to them inside. Some of it is first-hand. Desperation at one end, something near bliss at the other; sometimes anchored in fact, and sometimes only relief at leaving a place that was no longer home. The tension I keep returning to sits between the weight of heritage and the looseness of now, and staying with it means giving up control of the time that has passed and the time that has not arrived.\n\nWhat taught me was kindness — people generous enough to let me into their rooms and tell me their stories. My practice is a reversal of the eyes. I found the story of God gatekept, thorny and harsh, so I turned the looking inward, and found a soft want for something that answers questions I cannot yet phrase. The paintings come out of sitting with myself, learning to live beside a light I cannot see but feel.",
+    "long": ""
+  },
+  "_statementNote": "'long' (~300 words, for grants and residencies) is still empty. Expand 'medium' yourself when you need it - it should stay your writing.",
+  "bio": "Vikram Sra is a Sikh Punjabi painter based in Toronto. Born and raised in Punjab, he changed countries at eighteen. He works mostly in oil and is largely self-taught. He founded Duar Art Club, and has shown in Toronto and Brampton since 2015, with residencies in Punjab, Athens and at Gibraltar Point.",
+  "workIntro": "Fifty-one paintings, grouped as they are grouped in the studio. Dimensions are the real canvas, not the crop.",
+  "cv": {
+    "Exhibitions": [
+      {
+        "year": "2026",
+        "title": "Insides",
+        "venue": "The Plumb",
+        "city": "Toronto",
+        "note": "Group show"
+      },
+      {
+        "year": "2024",
+        "title": "What worked for me I never paid into, What I worked at never paid off",
+        "venue": "Hearth",
+        "city": "Toronto",
+        "note": "Group show"
+      },
+      {
+        "year": "2024",
+        "title": "Kaal",
+        "venue": "Duar Art Club",
+        "city": "Toronto",
+        "note": "Group show on time"
+      },
+      {
+        "year": "2021–22",
+        "title": "Pancakes and Booze",
+        "venue": "",
+        "city": "Toronto",
+        "note": "Community group show"
+      },
+      {
+        "year": "2016",
+        "title": "Tabeer",
+        "venue": "IX Gallery",
+        "city": "Toronto",
+        "note": "Group show with Navi Sandhu"
+      },
+      {
+        "year": "2015–17",
+        "title": "Sikh Heritage Month",
+        "venue": "Peel Art Gallery, Museum and Archives",
+        "city": "Brampton",
+        "note": ""
+      },
+      {
+        "year": "2015–17",
+        "title": "Sikh Activist Network",
+        "venue": "",
+        "city": "Brampton",
+        "note": "Community group shows"
+      }
+    ],
+    "Residencies": [
+      {
+        "year": "2025",
+        "title": "Preet Nagar",
+        "venue": "",
+        "city": "Amritsar, Punjab",
+        "note": ""
+      },
+      {
+        "year": "2024",
+        "title": "Road to Elefsina",
+        "venue": "",
+        "city": "Athens, Greece",
+        "note": "Myths, mysteries, life and death, reincarnation and immortality"
+      },
+      {
+        "year": "2020",
+        "title": "Gibraltar Point",
+        "venue": "Artscape",
+        "city": "Toronto",
+        "note": "Self-directed, with community members"
+      }
+    ],
+    "Also": [
+      {
+        "year": "",
+        "title": "Founder, Duar Art Club",
+        "venue": "",
+        "city": "",
+        "note": ""
+      },
+      {
+        "year": "",
+        "title": "Curation for community events",
+        "venue": "",
+        "city": "",
+        "note": ""
+      },
+      {
+        "year": "",
+        "title": "Custom fabrication in wood and metal",
+        "venue": "",
+        "city": "",
+        "note": ""
+      }
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+[
+  {
+    "old": "not home yet.jpg",
+    "new": "Not Home Yet.jpg",
+    "oldStem": "not home yet",
+    "newStem": "Not Home Yet",
+    "title": "Not Home Yet"
+  },
+  {
+    "old": "shiv kumar batalvi.jpg",
+    "new": "Shiv Kumar Batalvi.jpg",
+    "oldStem": "shiv kumar batalvi",
+    "newStem": "Shiv Kumar Batalvi",
+    "title": "Shiv Kumar Batalvi"
+  },
+  {
+    "old": "where time loses its name.jpg",
+    "new": "Where Time Loses Its Name.jpg",
+    "oldStem": "where time loses its name",
+    "newStem": "Where Time Loses Its Name",
+    "title": "Where Time Loses Its Name"
+  }
+]

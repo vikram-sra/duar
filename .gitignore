@@ -27,3 +27,4 @@ dist-ssr
 # public/portfolio/ are served and committed — regenerate with: npm run portfolio.
 # Leading slash matters: a bare "portfolio/" would also ignore public/portfolio/.
 /portfolio/
+scripts/__pycache__/

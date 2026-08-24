@@ -219,10 +219,40 @@ export function createPaintingDoor(group, painting) {
     return { panel, panelMaterial, width, height, centreY: centerY };
 }
 
-// Ultra-fast multi-tier texture streaming system for mobile & desktop:
-// 1. Instant LQIP thumbnails (~3-5 KB each) for zero-latency initial rendering.
-// 2. High-res WebP / optimized progressive JPEG streaming with off-thread ImageBitmap decoding.
-// 3. Concurrency-limited priority queue to prevent frame drops and thermal throttling on older phones.
+// Texture streaming, in three tiers with a hard memory ceiling.
+//
+// A painting is only ever shown at the resolution the camera can actually resolve:
+//
+//   THUMB (240px)  every work, loaded once and then kept forever. ~4KB each, and
+//                  retaining all of them costs a few MB — which buys an instant,
+//                  allocation-free fallback whenever a larger tier is evicted.
+//   MID   (512px)  the ring view. This is what a painting standing on a ring
+//                  actually occupies on screen.
+//   FULL  (1200px) only the work being looked at, and its immediate neighbours.
+//
+// The ceiling is what matters. Holding every painting at FULL costs ~300MB of GPU
+// memory and grows with the collection, which is enough to have the tab killed on a
+// phone. Tiers above THUMB are tracked in an LRU and evicted back down to their
+// retained thumbnail as soon as the budget is exceeded, so residency is bounded by
+// the budget rather than by how long someone browses.
+
+export const TIER = { THUMB: 0, MID: 1, FULL: 2 };
+
+// Bytes-on-GPU for an RGBA8 texture, including the mip chain (~33% overhead).
+function gpuBytes(texture) {
+    const img = texture.image;
+    if (!img || !img.width || !img.height) return 0;
+    const base = img.width * img.height * 4;
+    return texture.generateMipmaps ? base * 1.3333 : base;
+}
+
+const isMobile = typeof navigator !== 'undefined' &&
+    (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+        (typeof window !== 'undefined' && window.innerWidth < 768));
+
+// Deliberately well under what a browser will grant: the canvas backing store, the
+// sculpture, the sky and the JS heap all draw from the same budget.
+const BUDGET_BYTES = (isMobile ? 24 : 64) * 1024 * 1024;
 
 const textureLoader = new THREE.TextureLoader();
 let _supportsWebP = null;
@@ -243,124 +273,221 @@ export function checkWebPSupport() {
     });
 }
 
-// Load ultra-lightweight LQIP thumbnail (~3-5 KB)
+// Image URLs carry a short content hash. Filenames are the artist's own and get
+// reused when a work is re-shot, so without this a visitor holding a year-long
+// cached copy would never see the new version.
+function assetUrl(path, version) {
+    return version ? `/portfolio/${path}?v=${version}` : `/portfolio/${path}`;
+}
+
+// Every door currently holding a texture above THUMB, newest use last.
+const resident = new Set();
+let residentBytes = 0;
+
+export function textureBudget() {
+    return { bytes: residentBytes, limit: BUDGET_BYTES, count: resident.size };
+}
+
+// Mark a painting as being looked at right now, so the LRU spares it.
+export function touchPainting(door) {
+    door._lastSeen = performance.now();
+}
+
+// Drop a painting back to its retained thumbnail. No load, no allocation — the
+// thumbnail never left, so this is a pointer swap plus a dispose.
+function evictToThumb(door) {
+    if (!door._texture) return;
+    residentBytes -= door._bytes || 0;
+    resident.delete(door);
+    door._texture.dispose();
+    door._texture = null;
+    door._bytes = 0;
+    door._tier = TIER.THUMB;
+    const mat = door.panelMaterial;
+    if (mat && door._thumbTexture) {
+        mat.map = door._thumbTexture;
+        mat.needsUpdate = true;
+    }
+}
+
+// Evict least-recently-seen paintings until the budget is satisfied. `protect` is the
+// work being focused; evicting it would blank the one thing on screen.
+function enforceBudget(protect) {
+    if (residentBytes <= BUDGET_BYTES) return;
+    const candidates = [...resident]
+        .filter(d => d !== protect)
+        .sort((a, b) => (a._lastSeen || 0) - (b._lastSeen || 0));
+    for (const door of candidates) {
+        if (residentBytes <= BUDGET_BYTES) break;
+        evictToThumb(door);
+    }
+}
+
+// THUMB: loaded once per painting and retained for the lifetime of the view.
 export async function loadPaintingThumbnail(door) {
-    if (door._thumbRequested || door._fullTextureLoaded) return;
+    if (door._thumbRequested) return;
     door._thumbRequested = true;
 
     const isWebp = await checkWebPSupport();
-    const thumbUrl = isWebp && door.data.thumb
-        ? `/portfolio/${door.data.thumb}`
-        : `/portfolio/${door.data.thumbJpg || door.data.thumb || door.data.file}`;
+    const thumbUrl = assetUrl(
+        isWebp && door.data.thumb
+            ? door.data.thumb
+            : (door.data.thumbJpg || door.data.thumb || door.data.file),
+        door.data.v);
 
     textureLoader.load(
         thumbUrl,
         (texture) => {
-            if (door._fullTextureLoaded) {
-                texture.dispose();
-                return;
-            }
             texture.colorSpace = THREE.SRGBColorSpace;
             texture.minFilter = THREE.LinearFilter;
             texture.magFilter = THREE.LinearFilter;
             texture.generateMipmaps = false;
 
             const mat = door.panelMaterial;
-            if (mat && !door._fullTextureLoaded) {
+            if (!mat) { texture.dispose(); return; }
+
+            door._thumbTexture = texture;
+            // A larger tier may have arrived first; keep it and hold the thumb in
+            // reserve for eviction rather than downgrading what's already shown.
+            if (!door._texture) {
                 mat.map = texture;
-                mat.color.set(0xffffff);
+                // Brightness is owned by updatePaintingLight(); only clear the
+                // placeholder grey if nothing has tinted this panel yet.
+                if (door._lit === undefined) mat.color.set(0xffffff);
                 mat.needsUpdate = true;
-                door._thumbTexture = texture;
-            } else {
-                texture.dispose();
+                door._tier = TIER.THUMB;
             }
         },
         undefined,
-        () => {
-            // Silently ignore thumbnail fallback
-        }
+        () => { /* a missing thumbnail just leaves the panel flat until MID lands */ }
     );
 }
 
-// High-res texture loading queue
-const MAX_CONCURRENT_HIGH_RES = 3;
-let activeHighResLoads = 0;
-const highResQueue = [];
+const MAX_CONCURRENT_LOADS = 3;
+let activeLoads = 0;
+const queue = [];
 
-function processHighResQueue() {
-    while (activeHighResLoads < MAX_CONCURRENT_HIGH_RES && highResQueue.length > 0) {
-        const item = highResQueue.shift();
-        if (item.door._fullTextureLoaded) continue;
-        activeHighResLoads++;
-        _loadHighResDirect(item.door, () => {
-            activeHighResLoads--;
+function pump() {
+    while (activeLoads < MAX_CONCURRENT_LOADS && queue.length > 0) {
+        const item = queue.shift();
+        // Superseded while queued: something already loaded this tier or better.
+        if ((item.door._tier || 0) >= item.tier) { item.door._pending = 0; continue; }
+        activeLoads++;
+        loadTier(item, () => {
+            activeLoads--;
             if (item.onLoaded) item.onLoaded(item.door);
-            processHighResQueue();
+            pump();
         });
     }
 }
 
-async function _loadHighResDirect(door, done) {
+async function loadTier(item, done) {
+    const { door, tier } = item;
     const isWebp = await checkWebPSupport();
-    const fileUrl = isWebp && door.data.webp
-        ? `/portfolio/${door.data.webp}`
-        : `/portfolio/${door.data.file}`;
+    const d = door.data;
+
+    let path;
+    if (tier === TIER.FULL) {
+        path = isWebp && d.webp ? d.webp : d.file;
+    } else {
+        // A collection built before the mid tier existed still has to render.
+        const mid = isWebp ? d.mid : (d.midJpg || d.mid);
+        path = mid || (isWebp && d.webp ? d.webp : d.file);
+    }
+    const url = assetUrl(path, d.v);
 
     textureLoader.load(
-        fileUrl,
+        url,
         (texture) => {
+            const mat = door.panelMaterial;
+            door._pending = 0;
+
+            // Lost a race with a higher tier while decoding.
+            if (!mat || (door._tier || 0) >= tier) { texture.dispose(); done(); return; }
+
             texture.colorSpace = THREE.SRGBColorSpace;
-            texture.anisotropy = 2;
+            texture.anisotropy = 4;
             texture.generateMipmaps = true;
             texture.minFilter = THREE.LinearMipmapLinearFilter;
 
-            const mat = door.panelMaterial;
-            if (mat) {
-                if (door._thumbTexture) {
-                    door._thumbTexture.dispose();
-                    door._thumbTexture = null;
-                }
-                mat.map = texture;
-                mat.color.set(0xffffff);
-                mat.needsUpdate = true;
-                door._texture = texture;
-                door._fullTextureLoaded = true;
-            } else {
-                texture.dispose();
+            if (door._texture) {
+                residentBytes -= door._bytes || 0;
+                resident.delete(door);
+                door._texture.dispose();
             }
+
+            mat.map = texture;
+            if (door._lit === undefined) mat.color.set(0xffffff);
+            mat.needsUpdate = true;
+
+            door._texture = texture;
+            door._tier = tier;
+            door._bytes = gpuBytes(texture);
+            door._lastSeen = performance.now();
+            resident.add(door);
+            residentBytes += door._bytes;
+
+            enforceBudget(item.urgent ? door : null);
             done();
         },
         undefined,
         () => {
-            console.warn('Painting failed to load:', fileUrl);
+            door._pending = 0;
+            console.warn('Painting failed to load:', url);
             done();
         }
     );
 }
 
-export function loadPaintingTexture(door, onLoaded, urgent = false) {
-    if (door._fullTextureLoaded) {
+/**
+ * Ask for a painting at `tier`. Downgrades are ignored — a work never loses
+ * resolution except through eviction. `urgent` jumps the queue and protects the
+ * work from being evicted by its own arrival.
+ */
+export function requestTier(door, tier, { urgent = false, onLoaded = null } = {}) {
+    door._lastSeen = performance.now();
+
+    if ((door._tier || 0) >= tier) {
         if (onLoaded) onLoaded(door);
         return;
     }
-    if (door._textureRequested) {
+    if (door._pending >= tier) {
         if (urgent) {
-            const idx = highResQueue.findIndex((item) => item.door === door);
-            if (idx > -1) {
-                const item = highResQueue.splice(idx, 1)[0];
-                highResQueue.unshift(item);
-                processHighResQueue();
-            }
+            const i = queue.findIndex(q => q.door === door);
+            if (i > 0) queue.unshift(queue.splice(i, 1)[0]);
+            pump();
         }
         return;
     }
-    door._textureRequested = true;
-    if (urgent) {
-        highResQueue.unshift({ door, onLoaded });
-    } else {
-        highResQueue.push({ door, onLoaded });
+
+    door._pending = tier;
+    const item = { door, tier, urgent, onLoaded };
+    if (urgent) queue.unshift(item); else queue.push(item);
+    pump();
+}
+
+// Release everything this door holds. Called from clearDoors() on a view switch.
+export function releasePaintingTextures(door) {
+    if (door._texture) {
+        residentBytes -= door._bytes || 0;
+        resident.delete(door);
+        door._texture.dispose();
+        door._texture = null;
     }
-    processHighResQueue();
+    if (door._thumbTexture) {
+        door._thumbTexture.dispose();
+        door._thumbTexture = null;
+    }
+    door._bytes = 0;
+    door._tier = 0;
+    door._pending = 0;
+    door._thumbRequested = false;
+}
+
+export function resetTextureStreaming() {
+    queue.length = 0;
+    resident.clear();
+    residentBytes = 0;
 }
 
 // Distance at which the whole painting fits the viewport, whichever axis binds.

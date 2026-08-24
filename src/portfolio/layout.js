@@ -44,13 +44,18 @@ export function distributeAcrossRings(count) {
     return per;
 }
 
-// Newest first, so the innermost ring holds the most recent work (Flowers Unnamed is the latest).
+// Ring order, innermost first.
+//
+// `rank` in painting-details.json is the artist's own sequence and wins outright:
+// which work sits in the middle of the gallery is a curatorial decision, and a sort
+// by year cannot express "put this one beside that one". Anything without a rank
+// keeps the old behaviour and falls in after the ranked works, newest first.
 export function byYearNewestFirst(paintings) {
-    return [...paintings].sort((a, b) => {
-        if (a.id === '_DSC0284') return -1;
-        if (b.id === '_DSC0284') return 1;
-        return (b.year || 0) - (a.year || 0);
-    });
+    const ranked = paintings.filter(p => Number.isFinite(p.rank));
+    const rest = paintings.filter(p => !Number.isFinite(p.rank));
+    ranked.sort((a, b) => a.rank - b.rank);
+    rest.sort((a, b) => (b.year || 0) - (a.year || 0));
+    return [...ranked, ...rest];
 }
 
 // Returns [{ painting, ring, radius, angle, width }] placed on concentric rings according to Fibonacci distribution

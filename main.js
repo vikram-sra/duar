@@ -8,16 +8,74 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import gsap from 'gsap';
 
 import { loadManifest } from './src/portfolio/manifest.js';
-import { layoutPaintings, byYearNewestFirst } from './src/portfolio/layout.js';
+import { layoutPaintings, byYearNewestFirst, RING_SPACING } from './src/portfolio/layout.js';
 import {
-    createPaintingDoor, loadPaintingThumbnail, loadPaintingTexture, focusDistanceFor,
+    createPaintingDoor, loadPaintingThumbnail, requestTier, releasePaintingTextures,
+    resetTextureStreaming, touchPainting, textureBudget, TIER, focusDistanceFor,
     unitBox, unitPlane, frameMaterial, updatePaintingFramesMaterial
 } from './src/portfolio/paintingDoor.js';
 import { createCeramicSculpture } from './src/portfolio/sculpture.js';
 import { createTorontoSkySystem, calculateTorontoSunMoon } from './src/sky/celestial.js';
 
+// Scratch objects reused every frame. animate() runs 60x a second, so anything
+// allocated inside it -- a Color, a Vector3, a clone -- becomes ~1,500 short-lived
+// objects a second and the GC pauses that come with them. paintingDoor.js already
+// hoists its palette this way; these follow the same rule.
+const _frustum = new THREE.Frustum();
+const _projScreen = new THREE.Matrix4();
+const _doorWorldPos = new THREE.Vector3();
+const _sunUnit = new THREE.Vector3();
+const _moonUnit = new THREE.Vector3();
+const _panelNormal = new THREE.Vector3();
+const _sunDirScratch = new THREE.Vector3();
+const _moonDirScratch = new THREE.Vector3();
+const _skyColScratch = new THREE.Color();
+const _horizColScratch = new THREE.Color();
+
+// Sky and horizon grading stops.
+const C_DAY_ZENITH = new THREE.Color(0x1a4674);
+const C_DAY_HORIZON = new THREE.Color(0x4c78a6);
+// Dawn and dusk are not the same colour. Morning light comes up cool and rose over a
+// violet sky; evening goes out hot and orange. Keying both off sun altitude alone made
+// sunrise a rewind of sunset, which is the one moment of the cycle people recognise.
+const C_DAWN_ZENITH = new THREE.Color(0x2a2547);
+const C_DAWN_HORIZON = new THREE.Color(0xe0967f);
+const C_DUSK_ZENITH = new THREE.Color(0x1c182c);
+const C_DUSK_HORIZON = new THREE.Color(0xc8501f);
+const _twiZenith = new THREE.Color();
+const _twiHorizon = new THREE.Color();
+const C_NIGHT_ZENITH = new THREE.Color(0x000000);
+const C_NIGHT_HORIZON = new THREE.Color(0x000000);
+
+// Sun / moon disc and light tints across rise and set.
+const C_SUN_HIGH = new THREE.Color(0xfffde8);
+const C_SUN_LOW = new THREE.Color(0xf8b066);
+const C_SUNLIGHT_HIGH = new THREE.Color(0xfff2c8);
+const C_SUNLIGHT_LOW = new THREE.Color(0xf4a75e);     // low evening sun
+const C_SUNLIGHT_DAWN = new THREE.Color(0xf0b09a);    // low morning sun, cooler and pinker
+const C_MOON_HIGH = new THREE.Color(0xe6edf5);
+const C_MOON_LOW = new THREE.Color(0xc2d2e2);
+const C_MOONLIGHT_HIGH = new THREE.Color(0xc8d8e8);
+const C_MOONLIGHT_LOW = new THREE.Color(0xb0c5da);
+const C_MOON_EMISSIVE = new THREE.Color(0xe0e8f2);
+
+// Hemisphere bounce, night to noon.
+const C_HEMI_NIGHT = new THREE.Color(0x35455d);
+const C_HEMI_DAY = new THREE.Color(0xfcf2d4);
+const C_HEMI_GROUND_NIGHT = new THREE.Color(0x10151f);
+const C_HEMI_GROUND_DAY = new THREE.Color(0x241f18);
+
+// Floor across the 24-hour cycle.
+const C_FLOOR_NOON = new THREE.Color(0x68645e);
+const C_FLOOR_TWILIGHT = new THREE.Color(0x202834);
+const C_FLOOR_MIDNIGHT = new THREE.Color(0x0a1424);
+const C_FLOOR_DAWN = new THREE.Color(0x323034);
+
 // Floor ring ribbon. Door mode and paintings mode are the same geometry at different wave
 // amplitudes, which lets switchView morph between them instead of swapping buffers.
+// The resting speed of the sky: slow enough to read as atmosphere, not animation.
+const AMBIENT_DAY_SPEED = 0.025;
+
 const RING_SEGMENTS = 720;
 const RING_WAVE_COUNT = 60;
 const RING_WAVE_AMPLITUDE = 0.20;
@@ -33,8 +91,8 @@ const CONFIG = {
         { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: "/models/door_rustic.glb", position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
         { id: "blog", label: "BLOG", type: "scifi_portal", modelPath: "/models/door_scifi.glb", position: [-5, 0, -9], rotation: [0, 0.2, 0], destinationUrl: "/blog", animation: "slideUp", color: 0x88ccff, particles: "tech" },
         { id: "projects", label: "PROJECTS", type: "iron_gate", modelPath: "/models/gate_iron.glb", position: [0, 0, -10], rotation: [0, 0, 0], destinationUrl: "https://waveism.duar.one", animation: "swingBoth", color: 0xffeeaa, particles: "sparks" },
-        { id: "contact", label: "CONTACT", type: "stone_arch", modelPath: "/models/arch_stone.glb", position: [5, 0, -9], rotation: [0, -0.2, 0], destinationUrl: "mailto:you@example.com", animation: "dissolveField", color: 0xcc88ff, particles: "runes" },
-        { id: "about", label: "ABOUT", type: "shoji_screen", modelPath: "/models/door_shoji.glb", position: [10, 0, -6], rotation: [0, -0.4, 0], destinationUrl: "/about", animation: "slideRight", color: 0xff88aa, particles: "petals" }
+        { id: "contact", label: "CONTACT", type: "stone_arch", modelPath: "/models/arch_stone.glb", position: [5, 0, -9], rotation: [0, -0.2, 0], destinationUrl: "/about/", animation: "dissolveField", color: 0xcc88ff, particles: "runes" },
+        { id: "about", label: "ABOUT", type: "shoji_screen", modelPath: "/models/door_shoji.glb", position: [10, 0, -6], rotation: [0, -0.4, 0], destinationUrl: "/about/", animation: "slideRight", color: 0xff88aa, particles: "petals" }
     ],
     "paths": [
         { id: "main_path", texture: "/textures/stone_path_diffuse.png", points: [] }
@@ -51,6 +109,7 @@ class DuarApp {
         this.mouse = new THREE.Vector2();
         this.time = 0;
         this.daySpeed = 0.08;
+        this.motionPaused = false;   // ambient orbit + sky both running
         this.isTraveling = false;
         this.activeDoor = null;  // The currently open door, target for reticle
         this._orbitRadius = null; // When set, render loop enforces this distance from controls.target
@@ -287,6 +346,8 @@ class DuarApp {
 
     init() {
         this.camera = new THREE.PerspectiveCamera(CONFIG.scene.camera.fov, window.innerWidth / window.innerHeight, 0.1, 6000);
+        this.camera.fov = this._fovForAspect(window.innerWidth / window.innerHeight);
+        this.camera.updateProjectionMatrix();
         this.camera.position.set(0, 3.0, 28.5);
         this.camera.lookAt(0, 1.6, 0);
 
@@ -356,9 +417,23 @@ class DuarApp {
         this.setupDustMotes();
 
         window.addEventListener('resize', () => this.onResize(), { passive: true });
-        window.addEventListener('mousemove', (e) => this.onMouseMove(e), { passive: true });
         window.addEventListener('wheel', () => this.dismissIntro(), { passive: true });
-        window.addEventListener('contextmenu', (e) => e.preventDefault());
+        // iOS Safari ignores user-scalable=no, so the pinch and double-tap zoom
+        // gestures have to be refused explicitly or the overlay drifts off the scene.
+        ['gesturestart', 'gesturechange', 'gestureend'].forEach(g =>
+            window.addEventListener(g, (e) => e.preventDefault(), { passive: false })
+        );
+        let _lastTouchEnd = 0;
+        window.addEventListener('touchend', (e) => {
+            const now = performance.now();
+            if (now - _lastTouchEnd < 300) e.preventDefault();   // double-tap zoom
+            _lastTouchEnd = now;
+        }, { passive: false });
+
+        window.addEventListener('contextmenu', (e) => {
+            // Only while a door is genuinely being right-dragged (dev mode).
+            if (this.draggedDoor) e.preventDefault();
+        });
 
         let startX = 0; let startY = 0; let startTime = 0;
         window.addEventListener('pointerdown', (e) => {
@@ -400,7 +475,7 @@ class DuarApp {
         const now = new Date();
         const hours = now.getHours() + now.getMinutes() / 60;
         this.sunAngle = ((hours - 6) / 24) * Math.PI * 2;
-        this.daySpeed = 0.025;
+        this.daySpeed = AMBIENT_DAY_SPEED;
 
         // Fallback: dismiss the intro overlays if the user hasn't interacted yet.
         setTimeout(() => this.dismissIntro(), 14000);
@@ -417,18 +492,31 @@ class DuarApp {
             const style = document.createElement('style');
             style.id = 'compact-ui-css';
             style.innerHTML = `
+                /* Glass in the iOS sense: a capsule that refracts the scene behind it
+                   rather than a translucent grey panel. The look comes from four things
+                   layered - a vertical gradient so the top catches more light than the
+                   bottom, a heavy blur with the saturation pushed past 1 so colour
+                   bleeds through instead of going milky, a hairline border, and a bright
+                   inset line along the top edge standing in for a specular highlight. */
                 .glass-bar-wrapper {
                     pointer-events: auto;
-                    background: rgba(255, 255, 255, 0.05);
-                    backdrop-filter: blur(16px) saturate(180%);
-                    -webkit-backdrop-filter: blur(16px) saturate(180%);
-                    padding: 4px 10px;
-                    border-radius: 12px;
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+                    background: linear-gradient(180deg,
+                                rgba(255, 255, 255, 0.15) 0%,
+                                rgba(255, 255, 255, 0.07) 45%,
+                                rgba(255, 255, 255, 0.05) 100%);
+                    backdrop-filter: blur(28px) saturate(200%) brightness(1.06);
+                    -webkit-backdrop-filter: blur(28px) saturate(200%) brightness(1.06);
+                    padding: 5px 11px;
+                    border-radius: 999px;
+                    border: 0.5px solid rgba(255, 255, 255, 0.22);
+                    box-shadow:
+                        0 14px 44px rgba(0, 0, 0, 0.42),
+                        0 2px 10px rgba(0, 0, 0, 0.22),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.34),
+                        inset 0 -1px 0 rgba(255, 255, 255, 0.06);
                     display: flex;
                     align-items: center;
-                    gap: 7px;
+                    gap: 6px;
                 }
                 .chrome-slider {
                     -webkit-appearance: none;
@@ -451,12 +539,12 @@ class DuarApp {
                 }
                 .chrome-slider::-webkit-slider-thumb:hover { transform: scale(1.1); }
                 .glass-btn {
-                    background: rgba(255, 255, 255, 0.03);
-                    color: rgba(255, 255, 255, 0.65);
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    border-radius: 7px;
-                    width: 28px;
-                    height: 28px;
+                    background: rgba(255, 255, 255, 0.04);
+                    color: rgba(255, 255, 255, 0.68);
+                    border: 0.5px solid rgba(255, 255, 255, 0.10);
+                    border-radius: 999px;
+                    width: 30px;
+                    height: 30px;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
@@ -470,14 +558,19 @@ class DuarApp {
                 }
                 .glass-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
                 .glass-btn:hover {
-                    background: rgba(255, 255, 255, 0.12);
-                    border-color: rgba(255, 255, 255, 0.35);
+                    background: rgba(255, 255, 255, 0.15);
+                    border-color: rgba(255, 255, 255, 0.30);
                     color: #ffffff;
+                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
                 }
                 .glass-btn:active {
-                    background: rgba(255, 255, 255, 0.2);
-                    border-color: rgba(255, 255, 255, 0.5);
-                    transform: scale(0.95);
+                    background: rgba(255, 255, 255, 0.24);
+                    border-color: rgba(255, 255, 255, 0.42);
+                    transform: scale(0.92);
+                }
+                .glass-btn:focus-visible {
+                    outline: 2px solid rgba(255, 255, 255, 0.75);
+                    outline-offset: 2px;
                 }
                 .glass-btn.day-btn {
                     color: #ffd677;
@@ -562,7 +655,8 @@ class DuarApp {
             day: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 1v1.5M12 21.5V23M1 12h1.5M21.5 12H23"/></svg>`, // Minimalist Sun
             spiral: `<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9c0 4.97 4.03 9 9 9s9-4.03 9-9a7.2 7.2 0 0 0-7.2-7.2 7.2 7.2 0 0 0-7.2 7.2c0 3.09 2.51 5.6 5.6 5.6s5.6-2.51 5.6-5.6a4 4 0 0 0-4-4c-1.33 0-2.4 1.07-2.4 2.4s1.07 2.4 2.4 2.4"/></svg>`, // Spiral Icon
             night: `<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`, // Minimal Crescent
-            rotate: `<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>`, // Loop Icon
+            pause: `<svg viewBox="0 0 24 24"><rect x="7" y="5" width="3.6" height="14" rx="1.2"/><rect x="13.4" y="5" width="3.6" height="14" rx="1.2"/></svg>`,
+            play: `<svg viewBox="0 0 24 24"><path d="M8 5.4L18.4 12 8 18.6Z"/></svg>`,
             art: `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`, // Art Gallery Frame Icon
             duar: `<svg viewBox="0 0 24 24"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16h14zM9 5h6v14H9V5zm4 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>`, // Door Icon
             instagram: `<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>`
@@ -608,30 +702,41 @@ class DuarApp {
         spiralBtn.classList.add('spiral-btn');
         const moonBtn = createBtn(icons.night, () => { }, 'Night');
         moonBtn.classList.add('night-btn');
-        // Initial color based on default autoRotate = true
-        const rotateBtn = createBtn(icons.rotate, () => { }, 'Rotate · Hold to go wuuuuu');
-        this.rotateBtn = rotateBtn; // referenced by the rock-click reset in onClick()
-        rotateBtn.style.color = '#fff';
+        // One control for every kind of ambient motion: the camera's orbit and the
+        // passage of the sky. Two separate toggles meant the scene could sit in a
+        // half-moving state that neither button described.
+        const motionBtn = createBtn(icons.pause, () => { }, 'Pause motion · Hold to go wuuuuu');
+        this.motionBtn = motionBtn;
+        this.rotateBtn = motionBtn;   // legacy alias: the centre-click reset still uses it
+        motionBtn.style.color = '#fff';
+        this._motionIcons = { pause: icons.pause, play: icons.play };
 
         // Long Press / Tap Handler
+        const HOLD_MS = 200;   // past this, a press is a hold rather than a tap
+
         const addLongPressHandler = (btn, onInterval, onTap) => {
             let interval;
-            let time = 0;
+            let startedAt = 0;
             let isLongPress = false;
 
             const start = (e) => {
                 e.stopPropagation();
                 if (interval) clearInterval(interval);
                 this.resetUIHideTimer();
-                time = 0;
+                startedAt = performance.now();
                 isLongPress = false;
 
+                // The interval only drives the repeat. How long the button has been
+                // held is read from the clock: a browser is free to throttle timers
+                // (a backgrounded tab gets a tick or two a second), and counting ticks
+                // made a real hold register as a tap exactly when the device was
+                // busiest.
                 interval = setInterval(() => {
-                    time += 50;
+                    const held = performance.now() - startedAt;
                     this.resetUIHideTimer();
-                    if (time > 200) { // Wait 200ms before treating as hold
+                    if (held > HOLD_MS) {
                         isLongPress = true;
-                        onInterval(time);
+                        onInterval(held);
                     }
                 }, 50);
             };
@@ -641,16 +746,21 @@ class DuarApp {
                     clearInterval(interval);
                     interval = null;
                 }
+                // Re-check against the clock, in case the timer never got to run.
+                if (startedAt && performance.now() - startedAt > HOLD_MS) isLongPress = true;
+
                 if (!isLongPress && onTap && e.type !== 'pointerleave') {
                     onTap(); // Pure click
                     this.resetUIHideTimer();
                 } else if (isLongPress) {
                     // Generic Release Handler for all buttons
-                    if (btn === rotateBtn && this.controls.autoRotate) {
-                        this.controls.autoRotateSpeed = -0.8; // Gentle CW
-                    }
                     if (btn === spiralBtn || btn === sunBtn || btn === moonBtn) {
                         this.daySpeed = 0; // Stop motion on release: stays exactly where user leaves it
+                    }
+                    if (btn === motionBtn) {
+                        // Settle back to ambient, not to a standstill.
+                        this.controls.autoRotateSpeed = -0.8;
+                        this.daySpeed = AMBIENT_DAY_SPEED;
                     }
                 }
             };
@@ -661,25 +771,20 @@ class DuarApp {
             btn.addEventListener('pointerenter', () => this.resetUIHideTimer());
         };
 
-        // Rotate Handler
-        addLongPressHandler(rotateBtn, (t) => {
-            if (!this.controls.autoRotate) {
-                this.controls.autoRotate = true;
-                rotateBtn.style.color = '#fff';
-                this.controls.autoRotateSpeed = -0.5;
-            }
-            this.controls.autoRotateSpeed = Math.min(-0.5, this.controls.autoRotateSpeed * 1.05);
-            if (this.controls.autoRotateSpeed < -5000) this.controls.autoRotateSpeed = -5000;
+        // Motion: tap to pause or resume, hold to wind both the orbit and the sky up
+        // together and release to settle back to ambient.
+        addLongPressHandler(motionBtn, () => {
+            if (this.motionPaused) this.setMotionPaused(false);
+            this.controls.autoRotateSpeed = Math.max(-5000, Math.min(-0.5, this.controls.autoRotateSpeed * 1.05));
+            if (this.daySpeed < 0.02) this.daySpeed = 0.02;
+            this.daySpeed = Math.min(0.65, this.daySpeed * 1.08);
         }, () => {
-            this.controls.autoRotate = !this.controls.autoRotate;
-            rotateBtn.style.color = this.controls.autoRotate ? '#fff' : 'rgba(255,255,255,0.3)';
-            if (this.controls.autoRotate) {
-                this.controls.autoRotateSpeed = -0.8;
-            }
+            this.setMotionPaused(!this.motionPaused);
         });
 
         // Spiral Time Warp: Hold to increase speed of day, release to stay exactly where left
         addLongPressHandler(spiralBtn, (t) => {
+            if (this.motionPaused) this.setMotionPaused(false, { rotation: false });
             if (this.daySpeed < 0.02) this.daySpeed = 0.02;
             this.daySpeed = Math.min(0.65, this.daySpeed * 1.08); // Smooth acceleration
         }, () => {
@@ -690,6 +795,7 @@ class DuarApp {
 
         // Sun: Hold to accelerate day time-lapse, Click to jump to Noon
         addLongPressHandler(sunBtn, (t) => {
+            if (this.motionPaused) this.setMotionPaused(false, { rotation: false });
             if (this.daySpeed < 0.01) this.daySpeed = 0.01;
             this.daySpeed = Math.min(0.20, this.daySpeed * 1.10);
         }, () => {
@@ -699,6 +805,7 @@ class DuarApp {
 
         // Moon: Hold to accelerate night time-lapse, Click to jump to Midnight
         addLongPressHandler(moonBtn, (t) => {
+            if (this.motionPaused) this.setMotionPaused(false, { rotation: false });
             if (this.daySpeed < 0.01) this.daySpeed = 0.01;
             this.daySpeed = Math.min(0.20, this.daySpeed * 1.10);
         }, () => {
@@ -734,11 +841,95 @@ class DuarApp {
         this.instaBtn = instaBtn;
         instaBtn.style.display = this.viewMode === 'portfolio' ? 'inline-flex' : 'none';
 
-        wrapper.append(homeBtn, randBtn, sunBtn, spiralBtn, moonBtn, rotateBtn, modeBtn, instaBtn);
+        wrapper.append(homeBtn, motionBtn, randBtn, sunBtn, spiralBtn, moonBtn, modeBtn, instaBtn);
         container.appendChild(wrapper);
         document.body.appendChild(container);
 
         this.uiVisible = true;
+        this.resetUIHideTimer();
+    }
+
+    // Light the paintings by where the sun actually is.
+    //
+    // The canvases use an unlit material on purpose: it reproduces the artwork's own
+    // colour exactly, with no tone mapping between the file and the screen. The cost
+    // is that they ignore the scene's lights entirely, so a painting looked at with
+    // the sun behind it read exactly as bright as one in full sun. Rather than give
+    // that colour accuracy up, the material's tint is driven directly here -- full
+    // white is the true colours, and anything less is shade.
+    //
+    // Paintings billboard to face the camera, so their surface normal is simply the
+    // direction back toward the viewer. That makes the rule the intuitive one: with
+    // the sun behind you the work is lit, and facing into the sun it falls into shade.
+    updatePaintingLight(sky) {
+        if (!this.doors.length) return;
+
+        _sunUnit.copy(sky.cel.sunPos).normalize();
+        _moonUnit.copy(sky.cel.moonPos).normalize();
+
+        const sunUp = sky.sH;                       // 0 below the horizon, 1 overhead
+        const moonUp = (!(sky.sunAlt > 0.01)) ? sky.mH : 0;
+        // How strongly the sun casts, as opposed to how high it is. Scaling the key
+        // light by altitude alone cancelled the effect at exactly the hours it should
+        // be strongest: a low sun rakes hard across the work even though sH is small.
+        const sunCast = THREE.MathUtils.clamp(sunUp * 3.0, 0, 1);
+        const moonCast = THREE.MathUtils.clamp(moonUp * 3.0, 0, 1);
+        // Skylight reaching every surface regardless of facing. Never zero: a gallery
+        // that cannot be seen at midnight is not a gallery.
+        const ambient = 0.40 + 0.16 * sunUp;
+
+        for (const d of this.doors) {
+            if (!d.isPainting || !d.panelMaterial) continue;
+
+            _panelNormal.subVectors(this.camera.position, d.group.position);
+            _panelNormal.y = 0;
+            if (_panelNormal.lengthSq() < 1e-6) continue;
+            _panelNormal.normalize();
+
+            const sunKey = Math.max(0, _panelNormal.dot(_sunUnit));
+            const moonKey = Math.max(0, _panelNormal.dot(_moonUnit));
+
+            let b = ambient + 0.50 * sunCast * sunKey + 0.14 * moonCast * moonKey;
+
+            // The work being looked at comes up to full: stepping in front of a
+            // painting should not be punished by where the sun happens to be.
+            if (d === this.activeDoor) b = THREE.MathUtils.lerp(b, 1.0, 0.85);
+
+            b = THREE.MathUtils.clamp(b, 0.34, 1.0);
+            // Ease toward the target so a fast orbit reads as light moving across the
+            // work rather than as flicker.
+            d._lit = d._lit === undefined ? b : THREE.MathUtils.lerp(d._lit, b, 0.12);
+            d.panelMaterial.color.setScalar(d._lit);
+        }
+    }
+
+    // Pause or resume every ambient motion at once: the camera's slow orbit and the
+    // advance of the sky. The icon shows the action the button will take, not the
+    // current state, which is the convention every media control follows.
+    // `rotation: false` resumes the sky without starting the camera orbit. The time
+    // buttons need that: winding the day forward is a request to move the sun, not to
+    // set the gallery spinning.
+    setMotionPaused(paused, { rotation = true } = {}) {
+        this.motionPaused = !!paused;
+        if (rotation) {
+            this.controls.autoRotate = !this.motionPaused;
+            if (!this.motionPaused) this.controls.autoRotateSpeed = -0.8;   // gentle CW
+        }
+
+        const btn = this.motionBtn;
+        if (btn && this._motionIcons) {
+            const label = (this.motionPaused ? 'Play motion' : 'Pause motion') + ' · Hold to go wuuuuu';
+            btn.innerHTML = this.motionPaused ? this._motionIcons.play : this._motionIcons.pause;
+            btn.setAttribute('aria-label', label);
+            btn.setAttribute('aria-pressed', String(this.motionPaused));
+            // createBtn appends the tooltip inside the button, so innerHTML above
+            // removes it; rebuild it rather than leaving a button with no tip.
+            const tip = document.createElement('span');
+            tip.className = 'btn-tip';
+            tip.textContent = label;
+            btn.appendChild(tip);
+            btn.style.color = this.motionPaused ? 'rgba(255,255,255,0.35)' : '#fff';
+        }
         this.resetUIHideTimer();
     }
 
@@ -869,8 +1060,7 @@ class DuarApp {
                 if (hit) {
                     interactedWithObject = true;
                     if (isCenterObj(hit.object)) {
-                        this.controls.autoRotate = false;
-                        if (this.rotateBtn) this.rotateBtn.style.color = 'rgba(255,255,255,0.3)';
+                        this.setMotionPaused(true);
                         if (!this._switching) {
                             const nextMode = this.viewMode === 'default' ? 'portfolio' : 'default';
                             this.switchView(nextMode);
@@ -1101,51 +1291,48 @@ class DuarApp {
         });
     }
 
+    // Rebuilt whenever the door set changes. Raycasting this list directly, rather than
+    // the whole scene recursively, is what keeps hover off the frame budget: the scene
+    // includes an 1800-unit sky dome, the Milky Way sphere, a 150m ground disc and a
+    // star field, none of which are ever hover targets.
+    _rebuildHoverTargets() {
+        this._hoverTargets = [];
+        this._hoverOwner = new Map();
+        for (const d of this.doors) {
+            const hit = d.portalHitbox;
+            if (!hit) continue;
+            this._hoverTargets.push(hit);
+            this._hoverOwner.set(hit, d);
+        }
+        const centre = this.viewMode === 'portfolio' ? this.sculpture : this.rock;
+        if (centre) {
+            centre.traverse(o => { if (o.isMesh) { this._hoverTargets.push(o); this._hoverOwner.set(o, null); } });
+        }
+    }
+
     checkHover() {
         if (!this.raycaster || !this.scene || !this.camera) return;
+        if (!this._hoverTargets) this._rebuildHoverTargets();
+
         this.raycaster.setFromCamera(this.mouse, this.camera);
-        const hits = this.raycaster.intersectObjects(this.scene.children, true);
-        
+        const hits = this.raycaster.intersectObjects(this._hoverTargets, false);
+
         let hoverActive = false;
         let hoveredDoor = null;
-        
-        if (hits.length > 0) {
-            const isCenterObj = (obj) => {
-                if (obj === this.rock) return true;
-                if (this.sculpture) {
-                    let p = obj;
-                    while (p) {
-                        if (p === this.sculpture) return true;
-                        p = p.parent;
-                    }
-                }
-                return false;
-            };
 
-            const hit = hits.find(h => {
-                if (isCenterObj(h.object)) return true;
-                let obj = h.object;
-                while (obj) {
-                    if (this.doors.some(d => d.group === obj)) return true;
-                    obj = obj.parent;
-                }
-                return false;
-            });
-            
-            if (hit) {
-                hoverActive = true;
-                if (!isCenterObj(hit.object)) {
-                    let obj = hit.object;
-                    while (obj) {
-                        hoveredDoor = this.doors.find(d => d.group === obj);
-                        if (hoveredDoor) break;
-                        obj = obj.parent;
-                    }
-                }
-            }
+        if (hits.length > 0) {
+            // Every target maps straight back to its owner, so there is no tree walk
+            // and no linear search across the door list.
+            const owner = this._hoverOwner.get(hits[0].object);
+            hoverActive = true;
+            hoveredDoor = owner || null;   // null owner == the centre sculpture
         }
-        
-        document.body.style.cursor = hoverActive ? 'pointer' : 'crosshair';
+
+        const cursor = hoverActive ? 'pointer' : 'crosshair';
+        if (this._cursor !== cursor) {
+            this._cursor = cursor;
+            document.body.style.cursor = cursor;
+        }
         this.hoveredDoor = hoveredDoor;
 
         this.doors.forEach(d => {
@@ -1233,7 +1420,7 @@ class DuarApp {
             this.controls.autoRotateSpeed = -0.6; // Clockwise
 
             gsap.to(this.camera, {
-                fov: 50, duration: 1.8, ease: "power3.inOut",
+                fov: this._fovForAspect(this.camera.aspect), duration: 1.8, ease: "power3.inOut",
                 onUpdate: () => this.camera.updateProjectionMatrix()
             });
 
@@ -1276,21 +1463,56 @@ class DuarApp {
     }
 
     getDefaultOverview() {
-        const target = new THREE.Vector3(0, 1.6, 0); // Center of motion is the central sculpture
-        let camPos = new THREE.Vector3(0, 3.0, 28.5);
+        const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+        const narrow = THREE.MathUtils.clamp((4 / 3 - aspect) / (4 / 3 - 0.46), 0, 1);
+        // Landscape keeps the designed composition (narrow === 0). Portrait is framed
+        // off the artwork instead of off the world centre -- see below.
+        const aimY = 1.6;
+        const eyeY = 3.0;
+        const pull = 1;
+
+        const target = new THREE.Vector3(0, aimY, 0);
+        let camPos = new THREE.Vector3(0, eyeY, 28.5 * pull);
 
         if (this.viewMode === 'portfolio' && this.doors.length > 0) {
-            // Target Flowers Unnamed (_DSC0284) as the default overview painting
-            const targetPainting = this.doors.find(d => d.data?.id === '_DSC0284') || this.doors.find(d => d.isPainting);
+            // Target Flowers Unnamed as the default overview painting
+            const targetPainting = this.doors.find(d => d.data?.id === 'Flowers Unnamed') || this.doors.find(d => d.isPainting);
             if (targetPainting) {
                 const worldPos = new THREE.Vector3();
                 targetPainting.group.getWorldPosition(worldPos);
                 const angle = Math.atan2(worldPos.x, worldPos.z);
                 // Position camera further zoomed out outside of circle 1 (r ~ 28.5m, y = 3.0m)
-                const r = Math.max(28.0, (targetPainting.radius || 15.0) + 13.0);
+                let r = Math.max(28.0, (targetPainting.radius || 15.0) + 13.0) * pull;
+                let eye = eyeY;
+                let aim = aimY;
+
+                if (narrow > 0.01) {
+                    // On a narrow screen, compose around the artwork rather than the
+                    // world centre. focusDistanceFor already solves "how far back does
+                    // this canvas fill the frame" for the current aspect, so back off
+                    // from that instead of guessing a radius: the work keeps a
+                    // consistent share of the frame on any phone, and the horizon drops
+                    // out of the middle of the picture.
+                    const fill = focusDistanceFor(targetPainting.width, targetPainting.height, this.camera);
+                    // Only a little further back than "fills the frame": on a portrait
+                    // screen focusDistanceFor already has to retreat a long way to fit a
+                    // landscape canvas, so anything more empties the shot out again.
+                    const wide = fill * 1.25;
+                    // OrbitControls orbits *around* controls.target, so tilting the view by
+                    // raising the target moves the whole orbit centre rather than the aim.
+                    // Composition therefore comes from where the camera stands: put it at
+                    // human eye height and aim at the middle of the canvas, and the view
+                    // looks slightly up -- which drops the horizon and the empty floor with it.
+                    const centreY = targetPainting.centreY || 2.0;
+                    r = THREE.MathUtils.lerp(r, (targetPainting.radius || 15) + wide, narrow);
+                    aim = THREE.MathUtils.lerp(aimY, centreY, narrow);
+                    eye = THREE.MathUtils.lerp(eyeY, Math.min(1.6, centreY * 0.55), narrow);
+                }
+
+                target.set(0, aim, 0);
                 camPos = new THREE.Vector3(
                     Math.sin(angle) * r,
-                    3.0,
+                    eye,
                     Math.cos(angle) * r
                 );
             }
@@ -1305,7 +1527,7 @@ class DuarApp {
 
         // Hide reticle & focus popup
         this.activeDoor = null;
-        this.daySpeed = 0.025;    // back to ambient day/night speed
+        this.daySpeed = AMBIENT_DAY_SPEED;    // back to ambient day/night speed
         this._hideReticle();
         this.setUIVisibility(true); // bring the dock back (door closing / returning to orbit)
 
@@ -1343,7 +1565,7 @@ class DuarApp {
 
         // Reset FOV
         gsap.to(this.camera, {
-            fov: 50, // Default FOV from CONFIG
+            fov: this._fovForAspect(this.camera.aspect), // design FOV, widened on narrow screens
             duration: 1.8,
             ease: "power2.inOut",
             onUpdate: () => this.camera.updateProjectionMatrix()
@@ -1709,7 +1931,7 @@ class DuarApp {
 
         this.doors.forEach(door => {
             door.labelEl?.remove();
-            door._texture?.dispose();
+            releasePaintingTextures(door);
 
             door.group.traverse(obj => {
                 if (!obj.isMesh) return;
@@ -1718,7 +1940,9 @@ class DuarApp {
                 // geometries, which leaked ~119 geometries per view switch.
                 if (obj.geometry && obj.geometry !== unitBox && obj.geometry !== unitPlane) obj.geometry.dispose();
                 if (obj.material && obj.material !== frameMaterial) {
-                    if (obj.material.map && obj.material.map !== door._texture) obj.material.map.dispose();
+                    // Painting textures are already released above and shared across
+                    // tiers, so only dispose maps the streamer doesn't own.
+                    if (obj.material.map && !door.isPainting) obj.material.map.dispose();
                     obj.material.dispose();
                 }
             });
@@ -1727,6 +1951,9 @@ class DuarApp {
         });
 
         this.doors = [];
+        this._hoverTargets = null;
+        this._hoverOwner = null;
+        resetTextureStreaming();
     }
 
     // Fade the current doors out, build the new world, fade it in. Staggered
@@ -1761,7 +1988,7 @@ class DuarApp {
                 .filter(d => d.isPainting)
                 .sort((a, b) => this.camera.position.distanceTo(a.group.position) - this.camera.position.distanceTo(b.group.position))
                 .slice(0, 6)
-                .forEach((d) => loadPaintingTexture(d));
+                .forEach((d) => requestTier(d, TIER.MID));
             gsap.to(this.bloomPass, { threshold: 0.92, strength: 0.20, duration: 0.6 });
             if (this.rock) {
                 gsap.to(this.rock.scale, {
@@ -1880,12 +2107,15 @@ class DuarApp {
         // Eagerly load lightweight LQIP thumbnails (<5KB each) so no artwork is ever blank
         this.doors.forEach((door) => loadPaintingThumbnail(door));
 
-        // Prioritize full-res HD textures for the front overview artworks
+        // Bring the front-of-house works up to the ring tier. Full resolution is
+        // reserved for whatever the visitor actually looks at.
         this.doors
             .slice()
             .sort((a, b) => this.camera.position.distanceTo(a.group.position) - this.camera.position.distanceTo(b.group.position))
             .slice(0, 6)
-            .forEach((door) => loadPaintingTexture(door));
+            .forEach((door) => requestTier(door, TIER.MID));
+
+        this._hoverTargets = null;   // rebuilt lazily on the next hover test
 
         // Start initial view framing the first painting in zoomed-out focus
         if (!this.activeDoor && this.viewMode === 'portfolio') {
@@ -1901,7 +2131,9 @@ class DuarApp {
     focusPainting(door) {
         if (this.isTraveling || this._switching) return;
         this.dismissIntro();
-        loadPaintingTexture(door, null, true); // Ensure high-res HD texture is loaded with top priority upon selection
+        // The one work being looked at earns the 1200px master, ahead of the queue,
+        // and is protected from eviction while it holds focus.
+        requestTier(door, TIER.FULL, { urgent: true });
 
         // Exact world-space dead center of the painting panel
         const target = new THREE.Vector3();
@@ -1967,6 +2199,7 @@ class DuarApp {
                 this.doors.push(doorObj);
             });
         }
+        this._hoverTargets = null;   // rebuilt lazily on the next hover test
     }
 
     createDoorFrame(group, data) {
@@ -2191,15 +2424,41 @@ class DuarApp {
         this.scene.add(this.dust);
     }
 
+    // Vertical FOV that holds the horizontal field steady on narrow screens.
+    _fovForAspect(aspect) {
+        const base = CONFIG.scene.camera.fov;
+        const REF = 4 / 3;                      // at or above this, use the design FOV
+        if (aspect >= REF) return base;
+        const halfV = THREE.MathUtils.degToRad(base) / 2;
+        const halfH = Math.atan(Math.tan(halfV) * REF);          // horizontal field to preserve
+        const halfVNew = Math.atan(Math.tan(halfH) / Math.max(aspect, 0.35));
+        return THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(halfVNew) * 2, base, 58);
+    }
+
+    applyCameraFraming() {
+        const aspect = window.innerWidth / window.innerHeight;
+        this.camera.aspect = aspect;
+        this.camera.fov = this._fovForAspect(aspect);
+        this.camera.updateProjectionMatrix();
+    }
+
     onResize() {
-        this.camera.aspect = window.innerWidth / window.innerHeight; this.camera.updateProjectionMatrix();
-        this.renderer.setSize(window.innerWidth, window.innerHeight); this.composer.setSize(window.innerWidth, window.innerHeight);
+        this.applyCameraFraming();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.composer.setSize(window.innerWidth, window.innerHeight);
+        // A phone turned on its side changes how much gallery fits; re-frame the
+        // overview so the rings stay composed instead of drifting off-screen.
+        if (!this.activeDoor && !this.isTraveling && this.controls) {
+            const overview = this.getDefaultOverview();
+            this.camera.position.copy(overview.camPos);
+            this.controls.target.copy(overview.target);
+        }
     }
 
     onMouseMove(e) {
         this.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
         this.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-        this.checkHover();
+        this._hoverDirty = true;
     }
 
     animate() {
@@ -2214,19 +2473,20 @@ class DuarApp {
 
         if (this.sunMesh && this.moonMesh && this.skySystem) {
             // Ambient drift: fast responsive speed scaling for day/night cycle
-            this.sunAngle += this.daySpeed * 6.0 * dt;
+            if (!this.motionPaused) this.sunAngle += this.daySpeed * 6.0 * dt;
 
             // Calculate astronomically accurate Toronto solar & lunar coordinates for August
             const sky = this.skySystem.update(this.sunAngle, this.elapsed, this.sunDist);
+            this._sky = sky;
 
             this.sunMesh.position.copy(sky.cel.sunPos);
             this.moonMesh.position.copy(sky.cel.moonPos);
 
             // Light position placed at ~350m along exact same direction vector for high shadow precision
-            const sunDir = sky.cel.sunPos.clone().normalize();
-            const moonDir = sky.cel.moonPos.clone().normalize();
-            this.sunLight.position.copy(sunDir.multiplyScalar(350));
-            this.moonLight.position.copy(moonDir.multiplyScalar(350));
+            _sunDirScratch.copy(sky.cel.sunPos).normalize().multiplyScalar(350);
+            _moonDirScratch.copy(sky.cel.moonPos).normalize().multiplyScalar(350);
+            this.sunLight.position.copy(_sunDirScratch);
+            this.moonLight.position.copy(_moonDirScratch);
 
             this.moonMesh.lookAt(0, 0, 0);
 
@@ -2255,107 +2515,88 @@ class DuarApp {
             if (angleMod >= 0 && angleMod <= Math.PI) {
                 const riseEnd = transitionZone;
                 const sunsetStart = Math.PI - transitionZone;
-                if (angleMod < riseEnd) {
-                    const t = 1.0 - (angleMod / riseEnd);
-                    const sunCol = new THREE.Color(0xfffde8).lerp(new THREE.Color(0xf8b066), t);
-                    this.sunMesh.material.color.copy(sunCol);
-                    this.sunLight.color.lerpColors(new THREE.Color(0xfff2c8), new THREE.Color(0xf4a75e), t);
-                } else if (angleMod > sunsetStart) {
-                    const t = (angleMod - sunsetStart) / transitionZone;
-                    const sunCol = new THREE.Color(0xfffde8).lerp(new THREE.Color(0xf8b066), t);
-                    this.sunMesh.material.color.copy(sunCol);
-                    this.sunLight.color.lerpColors(new THREE.Color(0xfff2c8), new THREE.Color(0xf4a75e), t);
+                if (angleMod < riseEnd || angleMod > sunsetStart) {
+                    const t = angleMod < riseEnd
+                        ? 1.0 - (angleMod / riseEnd)
+                        : (angleMod - sunsetStart) / transitionZone;
+                    const lowTint = angleMod < riseEnd ? C_SUNLIGHT_DAWN : C_SUNLIGHT_LOW;
+                    this.sunMesh.material.color.lerpColors(C_SUN_HIGH, C_SUN_LOW, t);
+                    this.sunLight.color.lerpColors(C_SUNLIGHT_HIGH, lowTint, t);
                 } else {
-                    this.sunMesh.material.color.set(0xfffde8);
-                    this.sunLight.color.set(0xfff2c8);
+                    this.sunMesh.material.color.copy(C_SUN_HIGH);
+                    this.sunLight.color.copy(C_SUNLIGHT_HIGH);
                 }
             }
 
             if (angleMod > Math.PI && angleMod < Math.PI * 2) {
                 const riseEnd = Math.PI + transitionZone;
                 const moonSetStart = (Math.PI * 2) - transitionZone;
-                if (angleMod < riseEnd) {
-                    const t = 1.0 - ((angleMod - Math.PI) / transitionZone);
-                    const moonCol = new THREE.Color(0xe6edf5).lerp(new THREE.Color(0xc2d2e2), t);
-                    this.moonMesh.material.color.copy(moonCol);
-                    this.moonMesh.material.emissive.copy(moonCol);
-                    this.moonLight.color.lerpColors(new THREE.Color(0xc8d8e8), new THREE.Color(0xb0c5da), t);
-                } else if (angleMod > moonSetStart) {
-                    const t = (angleMod - moonSetStart) / transitionZone;
-                    const moonCol = new THREE.Color(0xe6edf5).lerp(new THREE.Color(0xc2d2e2), t);
-                    this.moonMesh.material.color.copy(moonCol);
-                    this.moonMesh.material.emissive.copy(moonCol);
-                    this.moonLight.color.lerpColors(new THREE.Color(0xc8d8e8), new THREE.Color(0xb0c5da), t);
+                if (angleMod < riseEnd || angleMod > moonSetStart) {
+                    const t = angleMod < riseEnd
+                        ? 1.0 - ((angleMod - Math.PI) / transitionZone)
+                        : (angleMod - moonSetStart) / transitionZone;
+                    this.moonMesh.material.color.lerpColors(C_MOON_HIGH, C_MOON_LOW, t);
+                    this.moonMesh.material.emissive.copy(this.moonMesh.material.color);
+                    this.moonLight.color.lerpColors(C_MOONLIGHT_HIGH, C_MOONLIGHT_LOW, t);
                 } else {
-                    this.moonMesh.material.color.set(0xe6edf5);
-                    this.moonMesh.material.emissive.set(0xe0e8f2);
-                    this.moonLight.color.set(0xc8d8e8);
+                    this.moonMesh.material.color.copy(C_MOON_HIGH);
+                    this.moonMesh.material.emissive.copy(C_MOON_EMISSIVE);
+                    this.moonLight.color.copy(C_MOONLIGHT_HIGH);
                 }
             }
 
             // Atmospheric sky progression & horizon color grading
-            const dayZenith = new THREE.Color(0x1a4674); // Radiant deep daylight blue
-            const dayHorizon = new THREE.Color(0x4c78a6); // Atmospheric horizon blue
-
-            const sunsetZenith = new THREE.Color(0x1c182c);
-            const sunsetHorizon = new THREE.Color(0xb85220);
-
-            const nightZenith = new THREE.Color(0x000000);
-            const nightHorizon = new THREE.Color(0x000000);
-
-            let skyCol = new THREE.Color();
-            let horizCol = new THREE.Color();
+            // 1 through sunrise, 0 through sunset, smooth across the day between.
+            const riseFactor = Math.cos(angleMod) * 0.5 + 0.5;
+            _twiZenith.lerpColors(C_DUSK_ZENITH, C_DAWN_ZENITH, riseFactor);
+            _twiHorizon.lerpColors(C_DUSK_HORIZON, C_DAWN_HORIZON, riseFactor);
 
             if (sky.sunAlt > 0.10) {
-                skyCol.copy(dayZenith);
-                horizCol.copy(dayHorizon);
+                _skyColScratch.copy(C_DAY_ZENITH);
+                _horizColScratch.copy(C_DAY_HORIZON);
             } else if (sky.sunAlt > -0.04) {
                 const t = (0.10 - sky.sunAlt) / 0.14;
-                skyCol.lerpColors(dayZenith, sunsetZenith, t);
-                horizCol.lerpColors(dayHorizon, sunsetHorizon, t);
+                _skyColScratch.lerpColors(C_DAY_ZENITH, _twiZenith, t);
+                _horizColScratch.lerpColors(C_DAY_HORIZON, _twiHorizon, t);
             } else {
                 const t = Math.min(1.0, (-0.04 - sky.sunAlt) / 0.16);
-                skyCol.lerpColors(sunsetZenith, nightZenith, t);
-                horizCol.lerpColors(sunsetHorizon, nightHorizon, t);
+                _skyColScratch.lerpColors(_twiZenith, C_NIGHT_ZENITH, t);
+                _horizColScratch.lerpColors(_twiHorizon, C_NIGHT_HORIZON, t);
             }
 
             if (this.skySystem && this.skySystem.skyDomeMat) {
-                this.skySystem.skyDomeMat.uniforms.uZenithColor.value.copy(skyCol);
-                this.skySystem.skyDomeMat.uniforms.uHorizonColor.value.copy(horizCol);
+                this.skySystem.skyDomeMat.uniforms.uZenithColor.value.copy(_skyColScratch);
+                this.skySystem.skyDomeMat.uniforms.uHorizonColor.value.copy(_horizColScratch);
             }
 
             this.scene.background = null;
-            if (this.scene.fog) this.scene.fog.color.copy(horizCol);
+            if (this.scene.fog) this.scene.fog.color.copy(_horizColScratch);
 
             // Ambient sky & earth bounce light: maintains ground and sculpture visibility while keeping shadows deep
             this.hemiLight.intensity = 0.07 + (sky.sH * 0.15) + (sky.mH * 0.12);
-            this.hemiLight.color.lerpColors(new THREE.Color(0x35455d), new THREE.Color(0xfcf2d4), sky.sH);
-            this.hemiLight.groundColor.lerpColors(new THREE.Color(0x10151f), new THREE.Color(0x241f18), sky.sH);
+            this.hemiLight.color.lerpColors(C_HEMI_NIGHT, C_HEMI_DAY, sky.sH);
+            this.hemiLight.groundColor.lerpColors(C_HEMI_GROUND_NIGHT, C_HEMI_GROUND_DAY, sky.sH);
 
             // Real-time floor color transition: Peak daytime -> Off-white; Midnight -> Royal navy blue
             if (this.groundMat) {
-                const _offWhite = new THREE.Color(0x68645e);     // Peak Daytime: Soft matte off-white (clear, non-blinding)
-                const _twilightBlue = new THREE.Color(0x202834); // Sunset: Twilight Slate Blue
-                const _royalNavy = new THREE.Color(0x0a1424);    // Midnight: Royal Navy Blue
-                const _dawnSlate = new THREE.Color(0x323034);    // Sunrise: Dawn Slate
                 const Q = Math.PI / 2;
 
                 if (angleMod >= 0 && angleMod < Q) {
                     // Sunrise -> Noon (Dawn Slate -> Off-White)
                     const t = angleMod / Q;
-                    this.groundMat.color.lerpColors(_dawnSlate, _offWhite, t);
+                    this.groundMat.color.lerpColors(C_FLOOR_DAWN, C_FLOOR_NOON, t);
                 } else if (angleMod >= Q && angleMod < Math.PI) {
                     // Noon -> Sunset (Off-White -> Twilight Slate Blue)
                     const t = (angleMod - Q) / Q;
-                    this.groundMat.color.lerpColors(_offWhite, _twilightBlue, t);
+                    this.groundMat.color.lerpColors(C_FLOOR_NOON, C_FLOOR_TWILIGHT, t);
                 } else if (angleMod >= Math.PI && angleMod < Math.PI * 1.5) {
                     // Sunset -> Midnight (Twilight Slate Blue -> Royal Navy Blue)
                     const t = (angleMod - Math.PI) / Q;
-                    this.groundMat.color.lerpColors(_twilightBlue, _royalNavy, t);
+                    this.groundMat.color.lerpColors(C_FLOOR_TWILIGHT, C_FLOOR_MIDNIGHT, t);
                 } else {
                     // Midnight -> Sunrise (Royal Navy Blue -> Dawn Slate)
                     const t = (angleMod - Math.PI * 1.5) / Q;
-                    this.groundMat.color.lerpColors(_royalNavy, _dawnSlate, t);
+                    this.groundMat.color.lerpColors(C_FLOOR_MIDNIGHT, C_FLOOR_DAWN, t);
                 }
             }
         }
@@ -2405,24 +2646,40 @@ class DuarApp {
             }
         }
 
+        if (this.viewMode === 'portfolio' && this._sky) this.updatePaintingLight(this._sky);
+
         // Real-time 4-stage frame and ground circles material phasing (Gold -> Silver -> Metallic Black -> Bronze)
         updatePaintingFramesMaterial(this.sunAngle, this.ringMat);
 
-        // Update Door Name Labels (smooth projection to 2D screen space)
-        this.updateLabels();
-
-        // Progressive proximity texture streaming (prevents VRAM spikes and thermal throttling on older phones)
+        // Promote only what the visitor can actually see. The previous version gated on
+        // a fixed 55m radius, which every ring falls inside once the collection passes
+        // ~20 works — so it promoted the whole gallery to full resolution whether or not
+        // anyone looked. Visibility is the real signal, and it keeps the LRU honest by
+        // refreshing _lastSeen for on-screen work only.
         if (this.viewMode === 'portfolio' && (!this._lastTexCheck || nowMs - this._lastTexCheck > 200)) {
             this._lastTexCheck = nowMs;
             const camPos = this.camera.position;
-            const candidateDoors = this.doors
-                .filter(d => d.isPainting && !d._textureRequested)
-                .map(d => ({ door: d, dist: camPos.distanceTo(d.group.position) }))
-                .filter(item => item.dist < 55.0)
-                .sort((a, b) => a.dist - b.dist);
 
-            for (let i = 0; i < Math.min(candidateDoors.length, 3); i++) {
-                loadPaintingTexture(candidateDoors[i].door);
+            _projScreen.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+            _frustum.setFromProjectionMatrix(_projScreen);
+
+            // Beyond a couple of rings a painting is a few pixels tall; the ring tier is
+            // already more than it can resolve.
+            const promoteWithin = RING_SPACING * 2.5;
+            const visible = [];
+
+            for (const d of this.doors) {
+                if (!d.isPainting) continue;
+                d.group.getWorldPosition(_doorWorldPos);
+                if (!_frustum.containsPoint(_doorWorldPos)) continue;
+                touchPainting(d);
+                const dist = camPos.distanceTo(_doorWorldPos);
+                if (dist < promoteWithin) visible.push({ door: d, dist });
+            }
+
+            visible.sort((a, b) => a.dist - b.dist);
+            for (let i = 0; i < Math.min(visible.length, 3); i++) {
+                requestTier(visible[i].door, TIER.MID);
             }
         }
 
@@ -2453,6 +2710,11 @@ class DuarApp {
         // Billboarding - Only lookAt camera if not traveling
         if (!this.isTraveling) {
             this.doors.forEach(d => d.group.lookAt(this.camera.position.x, d.group.position.y, this.camera.position.z));
+        }
+
+        if (this._hoverDirty) {
+            this._hoverDirty = false;
+            this.checkHover();
         }
 
         this.controls.update();

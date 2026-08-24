@@ -1,4 +1,4 @@
-const CACHE = 'duar-v3';
+const CACHE = 'duar-v4';
 const APP_SHELL = [
     './',
     './index.html',
@@ -23,8 +23,11 @@ self.addEventListener('activate', (event) => {
 });
 
 // Cache strategy:
-// - Images and portfolio assets (/portfolio/, /models/): Cache-first with background revalidation for instant zero-latency loading on mobile.
-// - Navigation & scripts: Network-first with cache fallback.
+// - Images and portfolio assets (/portfolio/, /models/): cache-first and FINAL. These
+//   are content-addressed by filename, so a hit is always correct and needs no
+//   revalidation. manifest.json is deliberately excluded and served network-first, so
+//   newly published work still appears immediately.
+// - Navigation & scripts: network-first with cache fallback.
 self.addEventListener('fetch', (event) => {
     const req = event.request;
     if (req.method !== 'GET') return;
@@ -33,21 +36,20 @@ self.addEventListener('fetch', (event) => {
     if (new URL(req.url).origin !== self.location.origin) return;
 
     const url = new URL(req.url);
-    const isImageOrAsset = req.destination === 'image' || url.pathname.includes('/portfolio/') || url.pathname.includes('/models/');
+    // The manifest is the index of what exists; it must never come from cache-first
+    // or new work stays invisible until the cache is cleared.
+    const isManifest = url.pathname.endsWith('/manifest.json');
+    const isImageOrAsset = !isManifest && (
+        req.destination === 'image' ||
+        url.pathname.includes('/portfolio/') ||
+        url.pathname.includes('/models/') ||
+        url.pathname.includes('/textures/'));
 
     if (isImageOrAsset) {
         event.respondWith(
             caches.match(req).then((cached) => {
-                if (cached) {
-                    // Revalidate in background
-                    fetch(req).then((res) => {
-                        if (res && res.ok) {
-                            const copy = res.clone();
-                            caches.open(CACHE).then((cache) => cache.put(req, copy));
-                        }
-                    }).catch(() => {});
-                    return cached;
-                }
+                // A hit is authoritative: same filename means same bytes.
+                if (cached) return cached;
                 return fetch(req).then((res) => {
                     if (res && res.ok) {
                         const copy = res.clone();
