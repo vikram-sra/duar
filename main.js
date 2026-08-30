@@ -76,6 +76,17 @@ const C_FLOOR_DAWN = new THREE.Color(0x323034);
 // The resting speed of the sky: slow enough to read as atmosphere, not animation.
 const AMBIENT_DAY_SPEED = 0.025;
 
+// How high the opening shot hangs above the standing default view. High enough to
+// read as an aerial establishing shot of the whole ring system; controls.maxDistance
+// is temporarily raised past this during the descent so OrbitControls' own distance
+// clamp can't fight the tween.
+const INTRO_HEIGHT = 130;
+
+// A plateau well above the standing eye height -- still low enough that individual
+// paintings read clearly (they billboard to the camera regardless of angle), high
+// enough that the whole ring layout is legible in one shot before the final settle.
+const INTRO_MID_HEIGHT = 44;
+
 const RING_SEGMENTS = 720;
 const RING_WAVE_COUNT = 60;
 const RING_WAVE_AMPLITUDE = 0.20;
@@ -109,7 +120,7 @@ class DuarApp {
         this.mouse = new THREE.Vector2();
         this.time = 0;
         this.daySpeed = 0.08;
-        this.motionPaused = false;   // ambient orbit + sky both running
+        this.motionPaused = true;    // held for the opening descent; released when it lands
         this.isTraveling = false;
         this.activeDoor = null;  // The currently open door, target for reticle
         this._orbitRadius = null; // When set, render loop enforces this distance from controls.target
@@ -324,6 +335,9 @@ class DuarApp {
     }
 
     revealScene() {
+        this._revealed = true;
+        this._maybeStartIntro();
+
         const loader = document.getElementById('loading');
         if (loader) {
             gsap.to(loader, {
@@ -399,7 +413,7 @@ class DuarApp {
         this.controls.minDistance = 0.5;
         this.controls.maxDistance = 100;
         this.controls.maxPolarAngle = Math.PI * 0.54; // Allows low-angle upward gaze into the sky
-        this.controls.autoRotate = true; // Default On
+        this.controls.autoRotate = false; // Held during the opening descent; released in setMotionPaused()
         this.controls.autoRotateSpeed = -0.8; // Gentle default CW
 
         this.scene.fog = new THREE.FogExp2(CONFIG.scene.fog.color, 0.002);
@@ -903,12 +917,71 @@ class DuarApp {
         }
     }
 
-    // Pause or resume every ambient motion at once: the camera's slow orbit and the
-    // advance of the sky. The icon shows the action the button will take, not the
-    // current state, which is the convention every media control follows.
-    // `rotation: false` resumes the sky without starting the camera orbit. The time
-    // buttons need that: winding the day forward is a request to move the sun, not to
-    // set the gallery spinning.
+    // Fires the opening descent once both halves are ready: the doors exist (so the
+    // default overview target is known) and the loader has actually cleared (so the
+    // held aerial beat is what the visitor sees first, not motion hidden behind it).
+    // Guards against firing twice regardless of which half resolves last.
+    _maybeStartIntro() {
+        if (this._introStarted || !this._doorsReady || !this._revealed) return;
+        if (this.viewMode !== 'portfolio' || this.activeDoor) return;
+        this._introStarted = true;
+        this._playIntroDescent();
+    }
+
+    // Three legs, not one long tween: a held beat at altitude, a slow drop to a
+    // plateau that's still well above head height -- long enough to actually read
+    // the ring layout -- then the final settle to the standing default view. Camera
+    // position is the only thing tweened; controls.target never moves, so
+    // OrbitControls keeps the shot aimed at the same point throughout and the view
+    // sweeps naturally from aerial to eye-level as the height changes.
+    //
+    // Rotation eases in during that final leg rather than snapping on at the end:
+    // it starts a beat after the leg begins and ramps up to cruising speed by the
+    // time the camera lands, so the nearest ring is already gliding smoothly by
+    // the moment the descent finishes instead of jumping from a dead stop.
+    _playIntroDescent() {
+        const overview = this._introOverview || this.getDefaultOverview();
+        // maxDistance was already raised the moment the aerial pose was set (see
+        // buildPortfolioDoors) so the held beat isn't clamped too; this just carries
+        // the value that needs restoring once the descent lands.
+        const priorMaxDistance = this._priorMaxDistance ?? this.controls.maxDistance;
+        this.controls.enableDamping = false;
+
+        gsap.killTweensOf(this.camera.position);
+        gsap.killTweensOf(this.controls);
+
+        const tl = gsap.timeline({
+            onComplete: () => {
+                this.controls.maxDistance = priorMaxDistance;
+                this.controls.enableDamping = true;
+                this.setMotionPaused(false);   // sync the icon + sky; rotation is already up to speed
+            }
+        });
+
+        // No stop between the plateau and the final descent -- 'sine.inOut' already
+        // eases to near-zero velocity at the leg boundary, which reads as the camera
+        // pausing to take in the ring layout without an actual dead stop before it
+        // continues on toward the centre.
+        tl.to(this.camera.position, { y: INTRO_MID_HEIGHT, duration: 8, delay: 1.6, ease: 'sine.inOut' })
+          .to(this.camera.position, {
+              y: overview.camPos.y,
+              duration: 7,
+              ease: 'sine.inOut',
+              onStart: () => {
+                  // Rotation eases on together with the final descent -- both starting
+                  // from a standstill on the same smooth curve reads as one continuous
+                  // motion rather than two separate events. The ramp finishes well
+                  // before the descent does, so cruising speed is already established
+                  // by the time the camera settles, instead of still accelerating
+                  // right as it lands.
+                  this.setMotionPaused(false, { rotation: false }); // icon flips now; speed ramps in below
+                  this.controls.autoRotate = true;
+                  this.controls.autoRotateSpeed = 0;
+                  gsap.to(this.controls, { autoRotateSpeed: -0.8, duration: 4, ease: 'sine.inOut' });
+              }
+          });
+    }
+
     setMotionPaused(paused, { rotation = true } = {}) {
         this.motionPaused = !!paused;
         if (rotation) {
@@ -2117,12 +2190,28 @@ class DuarApp {
 
         this._hoverTargets = null;   // rebuilt lazily on the next hover test
 
-        // Start initial view framing the first painting in zoomed-out focus
+        // Open on a high aerial view of the whole ring system, held until the loader
+        // clears, then craned slowly down into the standing default view -- see
+        // _maybeStartIntro(). Camera positioning happens now; the motion itself is
+        // gated on revealScene() so the descent always starts the instant the scene
+        // appears, whether asset loading was fast or slow.
+        //
+        // Framed dead-centre on the sculpture, not angled toward whichever painting
+        // getDefaultOverview() would otherwise target -- the opening shot is about the
+        // room as a whole. (Home / resetScene still use the painting-targeted framing;
+        // this is deliberately a separate, neutral pose used only for the opening.)
         if (!this.activeDoor && this.viewMode === 'portfolio') {
-            const overview = this.getDefaultOverview();
-            this.camera.position.copy(overview.camPos);
-            this.controls.target.copy(overview.target);
-            this.camera.lookAt(overview.target);
+            this._introOverview = {
+                camPos: new THREE.Vector3(0, 3.0, 28.5),
+                target: new THREE.Vector3(0, 1.6, 0)
+            };
+            this._priorMaxDistance = this.controls.maxDistance;
+            this.controls.maxDistance = Math.max(this._priorMaxDistance, INTRO_HEIGHT + 60);
+            this.camera.position.set(this._introOverview.camPos.x, INTRO_HEIGHT, this._introOverview.camPos.z);
+            this.controls.target.copy(this._introOverview.target);
+            this.camera.lookAt(this._introOverview.target);
+            this._doorsReady = true;
+            this._maybeStartIntro();
         }
     }
 

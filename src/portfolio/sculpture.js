@@ -171,7 +171,7 @@ export function createCeramicSculpture(loadingManager) {
             const apexY = rawMaxY * scaleFactor + model.position.y;
 
             // Sacred Red Thread tied directly to the physical top of the sculpture with silky curved 3D wave physics
-            const threadHeight = 360;
+            const threadHeight = 720; // doubled per feedback: reaches further skyward before fog swallows it
             const threadGeo = new THREE.CylinderGeometry(0.016, 0.016, threadHeight, 12, 1000);
             threadGeo.translate(0, threadHeight / 2, 0);
 
