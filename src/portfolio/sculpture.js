@@ -172,7 +172,9 @@ export function createCeramicSculpture(loadingManager) {
 
             // Sacred Red Thread tied directly to the physical top of the sculpture with silky curved 3D wave physics
             const threadHeight = 720; // doubled per feedback: reaches further skyward before fog swallows it
-            const threadGeo = new THREE.CylinderGeometry(0.016, 0.016, threadHeight, 12, 1000);
+            // openEnded: true -- the caps on a 0.016-radius tube are invisible discs;
+            // there's nothing at the (fog-hidden) tip or the base to justify the triangles.
+            const threadGeo = new THREE.CylinderGeometry(0.016, 0.016, threadHeight, 12, 1000, true);
             threadGeo.translate(0, threadHeight / 2, 0);
 
             const threadUniforms = {
@@ -182,12 +184,18 @@ export function createCeramicSculpture(loadingManager) {
                 uWind: { value: new THREE.Vector2(0.0, 0.0) }
             };
 
+            // Matte and near-unsaturated at rest -- a fine fiber scatters light softly and
+            // has no metallic highlight; the previous roughness/metalness read as a shiny
+            // rubber cord. Its "redness" now comes mostly from the fresnel term added
+            // below, which brightens toward saturated red at grazing angles -- the way
+            // looking along more of a translucent fibre's length, or through more of a
+            // shard of red glass, shows more of its colour than looking at it face-on.
             const threadMat = new THREE.MeshStandardMaterial({
-                color: 0xee1818,
-                emissive: 0xaa0808,
-                emissiveIntensity: 0.88,
-                roughness: 0.35,
-                metalness: 0.12
+                color: 0xd81c1c,
+                emissive: 0x991010,
+                emissiveIntensity: 1.3,
+                roughness: 0.88,
+                metalness: 0.02
             });
 
             threadMat.onBeforeCompile = (shader) => {
@@ -201,6 +209,7 @@ export function createCeramicSculpture(loadingManager) {
                     uniform float uMotion;
                     uniform vec2 uDrag;
                     uniform vec2 uWind;
+                    varying float vFresnel;
                 \n` + shader.vertexShader;
 
                 shader.vertexShader = shader.vertexShader.replace(
@@ -208,6 +217,28 @@ export function createCeramicSculpture(loadingManager) {
                     `
                     #include <begin_vertex>
                     float h = max(0.0, transformed.y);
+
+                    // A real fiber is never a perfectly uniform rod. This is a fixed,
+                    // per-height irregularity (two mismatched sine frequencies, not
+                    // animated) rather than true noise -- cheap, and non-repeating over
+                    // a length this long.
+                    float radius0 = length(position.xz);
+                    vec2 radialDir = radius0 > 0.0001 ? position.xz / radius0 : vec2(0.0);
+                    float radiusNoise = 1.0 + 0.22 * sin(h * 2.7 + 11.3) * sin(h * 0.9 + 3.1);
+
+                    // Guarantee a minimum on-screen width. At 0.016 world units radius,
+                    // the tube's projected width falls below a pixel well before the
+                    // thread is actually far away, and standard rasterization doesn't
+                    // reliably draw sub-pixel geometry every frame -- it flickers in and
+                    // out, which is what "disappears in parts" actually was. True
+                    // delicate thinness still holds up close; this only compensates once
+                    // perspective would otherwise erase it.
+                    vec3 worldPosApprox = (modelMatrix * vec4(transformed, 1.0)).xyz;
+                    float camDist = distance(cameraPosition, worldPosApprox);
+                    float minRadiusScale = max(1.0, camDist / 55.0);
+
+                    transformed.x = radialDir.x * radius0 * radiusNoise * minRadiusScale;
+                    transformed.z = radialDir.y * radius0 * radiusNoise * minRadiusScale;
 
                     // Smooth progressive root easement
                     float anchor = smoothstep(0.0, 1.8, h);
@@ -230,10 +261,45 @@ export function createCeramicSculpture(loadingManager) {
                     float dx = anchor * (bendX * waveStrength + dynamicDrag.x * (0.5 + uMotion * 0.3));
                     float dz = anchor * (bendZ * waveStrength + dynamicDrag.y * (0.5 + uMotion * 0.3));
 
+                    // A thread never sits perfectly still, even with the camera at rest --
+                    // a faint always-on flutter, independent of uMotion/uDrag, so it never
+                    // reads as a rigid rod between camera moves.
+                    float flutter = anchor * 0.035;
+                    dx += sin(uTime * 2.6 + h * 0.6) * flutter;
+                    dz += cos(uTime * 2.1 + h * 0.5 + 1.7) * flutter;
+
                     // Soft atmospheric expansion higher up
                     float heightGain = 1.0 + smoothstep(3.0, 45.0, h) * 1.15;
                     transformed.x += dx * heightGain;
                     transformed.z += dz * heightGain;
+
+                    // How edge-on is this surface to the viewer right now? Feeds the
+                    // fragment shader's grazing-angle red boost (see below).
+                    vec3 worldNormalForFresnel = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
+                    vec3 worldPosForFresnel = (modelMatrix * vec4(transformed, 1.0)).xyz;
+                    vec3 viewDirForFresnel = normalize(cameraPosition - worldPosForFresnel);
+                    vFresnel = pow(1.0 - clamp(abs(dot(viewDirForFresnel, worldNormalForFresnel)), 0.0, 1.0), 2.2);
+                    `
+                );
+
+                shader.fragmentShader = `
+                    varying float vFresnel;
+                \n` + shader.fragmentShader;
+
+                shader.fragmentShader = shader.fragmentShader.replace(
+                    '#include <dithering_fragment>',
+                    `
+                    #include <dithering_fragment>
+                    // Grazing viewing angle -- looking along the thread's length, through
+                    // more of its cross-section rather than square at its side -- reads as
+                    // a richer, more saturated red, the way a shard of red glass darkens
+                    // toward its own colour when you look through more of its thickness.
+                    // This runs after tonemapping (dithering_fragment is the last
+                    // chunk), so values are already clamped to [0,1] display range --
+                    // 1.0 red is already fully saturated here, pushing higher would be
+                    // a dead value.
+                    vec3 threadRed = vec3(1.0, 0.10, 0.07);
+                    gl_FragColor.rgb = mix(gl_FragColor.rgb, threadRed, vFresnel * 0.88);
                     `
                 );
             };
@@ -241,6 +307,11 @@ export function createCeramicSculpture(loadingManager) {
             const redThread = new THREE.Mesh(threadGeo, threadMat);
             redThread.position.set(0, apexY, 0);
             redThread.name = 'SculptureRedThread';
+            // The wave-bend and radius adjustments above happen entirely in the vertex
+            // shader, so the CPU-computed bounding sphere never reflects the actual
+            // displaced geometry. Frustum culling against that stale bounds was
+            // contributing to "disappears in parts" -- this mesh always renders instead.
+            redThread.frustumCulled = false;
             group.add(redThread);
             group.userData.threadUniforms = threadUniforms;
         },

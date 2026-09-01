@@ -82,10 +82,18 @@ const AMBIENT_DAY_SPEED = 0.025;
 // clamp can't fight the tween.
 const INTRO_HEIGHT = 130;
 
-// A plateau well above the standing eye height -- still low enough that individual
-// paintings read clearly (they billboard to the camera regardless of angle), high
-// enough that the whole ring layout is legible in one shot before the final settle.
-const INTRO_MID_HEIGHT = 44;
+// The descent used to be two chained tweens (aerial -> plateau -> settle). Each leg
+// used 'sine.inOut', which eases to zero velocity at BOTH its own start and end --
+// so the shared boundary between the legs was a double deceleration, a real stutter
+// confirmed by scrubbing a recording frame-by-frame, not just a code smell. A single
+// continuous tween has exactly one ease curve and nowhere for a seam to hide.
+const INTRO_DESCENT_DURATION = 15;   // unchanged from the old 8s + 7s total
+
+// Rotation ramps in alongside the sky and the ground rings, all three released
+// together the instant the descent begins rather than staggered -- the whole world
+// starts moving in parallel as the camera leaves the held aerial shot, instead of
+// spinning up as an afterthought partway down.
+const INTRO_ROTATION_RAMP_DURATION = 3;
 
 const RING_SEGMENTS = 720;
 const RING_WAVE_COUNT = 60;
@@ -120,7 +128,7 @@ class DuarApp {
         this.mouse = new THREE.Vector2();
         this.time = 0;
         this.daySpeed = 0.08;
-        this.motionPaused = true;    // held for the opening descent; released when it lands
+        this.motionPaused = true;    // held for the opening shot's static beat; released once it starts descending
         this.isTraveling = false;
         this.activeDoor = null;  // The currently open door, target for reticle
         this._orbitRadius = null; // When set, render loop enforces this distance from controls.target
@@ -928,58 +936,70 @@ class DuarApp {
         this._playIntroDescent();
     }
 
-    // Three legs, not one long tween: a held beat at altitude, a slow drop to a
-    // plateau that's still well above head height -- long enough to actually read
-    // the ring layout -- then the final settle to the standing default view. Camera
-    // position is the only thing tweened; controls.target never moves, so
-    // OrbitControls keeps the shot aimed at the same point throughout and the view
-    // sweeps naturally from aerial to eye-level as the height changes.
+    // A held beat at altitude, then one continuous drop to the standing default
+    // view -- a single tween, not several chained together. Camera position is the
+    // only thing tweened; controls.target never moves, so OrbitControls keeps the
+    // shot aimed at the same point throughout and the view sweeps naturally from
+    // aerial to eye-level as the height changes.
     //
-    // Rotation eases in during that final leg rather than snapping on at the end:
-    // it starts a beat after the leg begins and ramps up to cruising speed by the
-    // time the camera lands, so the nearest ring is already gliding smoothly by
-    // the moment the descent finishes instead of jumping from a dead stop.
+    // Rotation eases in partway through the descent rather than snapping on at the
+    // end, and is given a wide margin to reach cruising speed well before the
+    // descent's own ease tapers off -- so the nearest ring is already gliding
+    // smoothly under the camera as it settles, instead of the shot visibly running
+    // out of motion right as it lands.
     _playIntroDescent() {
         const overview = this._introOverview || this.getDefaultOverview();
         // maxDistance was already raised the moment the aerial pose was set (see
         // buildPortfolioDoors) so the held beat isn't clamped too; this just carries
         // the value that needs restoring once the descent lands.
         const priorMaxDistance = this._priorMaxDistance ?? this.controls.maxDistance;
-        this.controls.enableDamping = false;
 
+        // enableDamping deliberately left alone here (it's true from init() and
+        // stays true) -- toggling it off then back on while autoRotate is actively
+        // spinning was its own bug: OrbitControls only carries a rotation delta
+        // across frames when damping is on, so flipping it on at the exact moment
+        // rotation is at cruising speed reset that accumulator to empty, and the
+        // effective spin rate visibly collapsed to ~5% of speed for about a second
+        // before climbing back -- a second, independent cause of the landing
+        // reading as stop-and-go, on top of the sky issue below.
         gsap.killTweensOf(this.camera.position);
         gsap.killTweensOf(this.controls);
 
         const tl = gsap.timeline({
             onComplete: () => {
                 this.controls.maxDistance = priorMaxDistance;
-                this.controls.enableDamping = true;
-                this.setMotionPaused(false);   // sync the icon + sky; rotation is already up to speed
             }
         });
 
-        // No stop between the plateau and the final descent -- 'sine.inOut' already
-        // eases to near-zero velocity at the leg boundary, which reads as the camera
-        // pausing to take in the ring layout without an actual dead stop before it
-        // continues on toward the centre.
-        tl.to(this.camera.position, { y: INTRO_MID_HEIGHT, duration: 8, delay: 1.6, ease: 'sine.inOut' })
-          .to(this.camera.position, {
-              y: overview.camPos.y,
-              duration: 7,
-              ease: 'sine.inOut',
-              onStart: () => {
-                  // Rotation eases on together with the final descent -- both starting
-                  // from a standstill on the same smooth curve reads as one continuous
-                  // motion rather than two separate events. The ramp finishes well
-                  // before the descent does, so cruising speed is already established
-                  // by the time the camera settles, instead of still accelerating
-                  // right as it lands.
-                  this.setMotionPaused(false, { rotation: false }); // icon flips now; speed ramps in below
-                  this.controls.autoRotate = true;
-                  this.controls.autoRotateSpeed = 0;
-                  gsap.to(this.controls, { autoRotateSpeed: -0.8, duration: 4, ease: 'sine.inOut' });
-              }
-          });
+        tl.to(this.camera.position, {
+            y: overview.camPos.y,
+            duration: INTRO_DESCENT_DURATION,
+            delay: 1.6,
+            ease: 'sine.inOut'
+        });
+
+        // Release everything ambient -- sky, rings, and rotation -- at the same
+        // instant the descent begins, not staggered across it. motionPaused gates
+        // both sunAngle's advance and the ground rings' spin in animate(); holding
+        // it until partway down meant the sky and rings sat frozen well into the
+        // shot, then had to play their whole ambient sweep in whatever was left,
+        // compressed into less than their usual span -- which is what read as an
+        // abrupt jump right at the landing rather than a gentle, continuous one.
+        //
+        // A genuine child of the timeline, not a detached gsap.to() spawned from a
+        // callback -- a detached tween runs on its own clock, so scrubbing or
+        // retiming the parent timeline wouldn't move it in step, and it wouldn't
+        // show up if this sequence is ever scrubbed for review the way this one was.
+        const releaseAt = 1.6;
+        tl.call(() => {
+            this.setMotionPaused(false, { rotation: false }); // icon flips now; speed ramps in below
+            this.controls.autoRotate = true;
+        }, null, releaseAt);
+        tl.fromTo(this.controls,
+            { autoRotateSpeed: 0 },
+            { autoRotateSpeed: -0.8, duration: INTRO_ROTATION_RAMP_DURATION, ease: 'sine.inOut' },
+            releaseAt
+        );
     }
 
     setMotionPaused(paused, { rotation = true } = {}) {
@@ -2689,7 +2709,13 @@ class DuarApp {
                 }
             }
         }
-        if (this.rings) this.rings.forEach(r => r.mesh.rotation.z += r.speed);
+        // Gated on the same flag as the sky, and released at the same moment (see
+        // _playIntroDescent): held still through the opening shot's static beat,
+        // then spinning up in parallel with the camera the instant it starts
+        // descending, rather than having been quietly turning underneath a shot
+        // that was supposed to read as frozen. This also means the motion button's
+        // "pause everything" now genuinely covers the rings, which it didn't before.
+        if (!this.motionPaused && this.rings) this.rings.forEach(r => r.mesh.rotation.z += r.speed);
         if (this.rock && this.rock.visible) {
             this.rock.position.y = 0;
             this.rock.rotation.set(0, 0, 0); // Locked to ground
