@@ -10,6 +10,10 @@ import gsap from 'gsap';
 import { loadManifest } from './src/portfolio/manifest.js';
 import { layoutPaintings, byYearNewestFirst, RING_SPACING } from './src/portfolio/layout.js';
 import {
+    createTree, layoutForest, createForestFloor, createRoseCenterpiece, sharedForestGeometries,
+    getForestGroundTexture, updateForestWind, forestWindUniforms, forestGroundUniforms, getForestElevation
+} from './src/portfolio/forest.js';
+import {
     createPaintingDoor, loadPaintingThumbnail, requestTier, releasePaintingTextures,
     resetTextureStreaming, touchPainting, textureBudget, TIER, focusDistanceFor,
     unitBox, unitPlane, frameMaterial, updatePaintingFramesMaterial
@@ -64,6 +68,8 @@ const C_HEMI_NIGHT = new THREE.Color(0x35455d);
 const C_HEMI_DAY = new THREE.Color(0xfcf2d4);
 const C_HEMI_GROUND_NIGHT = new THREE.Color(0x10151f);
 const C_HEMI_GROUND_DAY = new THREE.Color(0x241f18);
+const C_HEMI_FOREST_GROUND_NIGHT = new THREE.Color(0x0a1209);
+const C_HEMI_FOREST_GROUND_DAY = new THREE.Color(0x233118);
 
 // Floor across the 24-hour cycle.
 const C_FLOOR_NOON = new THREE.Color(0x68645e);
@@ -71,10 +77,38 @@ const C_FLOOR_TWILIGHT = new THREE.Color(0x202834);
 const C_FLOOR_MIDNIGHT = new THREE.Color(0x0a1424);
 const C_FLOOR_DAWN = new THREE.Color(0x323034);
 
+// The forest floor stays in a mossy green-brown register instead of shifting
+// to the gallery's navy midnight -- a stage floor and a forest floor going
+// dark should look like different kinds of dark, not the same ramp retinted.
+// Brighter than they look: in forest mode these multiply against the litter
+// texture (average luminance ~140), so the value that actually lands on screen
+// is roughly half of what is written here. Tuned at the product, not on paper.
+const C_FLOOR_FOREST_NOON = new THREE.Color(0x8c9e6e);
+const C_FLOOR_FOREST_TWILIGHT = new THREE.Color(0x4e6640);
+const C_FLOOR_FOREST_MIDNIGHT = new THREE.Color(0x1e2c1a);
+const C_FLOOR_FOREST_DAWN = new THREE.Color(0x8a8160);
+
 // Floor ring ribbon. Door mode and paintings mode are the same geometry at different wave
 // amplitudes, which lets switchView morph between them instead of swapping buffers.
 // The resting speed of the sky: slow enough to read as atmosphere, not animation.
 const AMBIENT_DAY_SPEED = 0.025;
+
+// The three views, in the order the centre object cycles through on click. A
+// mode string's position in this array is its whole identity for cycling
+// purposes -- nextViewMode() and destLabelFor() both just index off it, so
+// adding a fourth view later only means appending here and adding one branch
+// in switchView(), not touching every click handler that toggles between modes.
+const VIEW_MODES = ['default', 'portfolio', 'forest'];
+function nextViewMode(mode) {
+    return VIEW_MODES[(VIEW_MODES.indexOf(mode) + 1) % VIEW_MODES.length];
+}
+const VIEW_MODE_LABELS = { default: 'Doors', portfolio: 'Paintings', forest: 'Forest' };
+// The dock and top-right controls both show "what clicking takes you to next",
+// not the current mode -- this is the one place that phrasing is computed, so
+// the two buttons and the centre-click handler can't drift out of sync.
+function destLabelFor(mode) {
+    return VIEW_MODE_LABELS[nextViewMode(mode)];
+}
 
 // How high the opening shot hangs above the standing default view. High enough to
 // read as an aerial establishing shot of the whole ring system; controls.maxDistance
@@ -360,9 +394,15 @@ class DuarApp {
         if (this.viewMode === 'portfolio') {
             if (this.sculpture) this.sculpture.visible = true;
             if (this.rock) this.rock.visible = false;
+            if (this.roseCenterpiece) this.roseCenterpiece.visible = false;
+        } else if (this.viewMode === 'forest') {
+            if (this.roseCenterpiece) this.roseCenterpiece.visible = true;
+            if (this.rock) this.rock.visible = false;
+            if (this.sculpture) this.sculpture.visible = false;
         } else {
             if (this.rock) this.rock.visible = true;
             if (this.sculpture) this.sculpture.visible = false;
+            if (this.roseCenterpiece) this.roseCenterpiece.visible = false;
         }
     }
 
@@ -387,7 +427,7 @@ class DuarApp {
         this.renderer.toneMappingExposure = 1.02; // Clean, natural exposure
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFShadowMap; // Clean, standard PCF shadows
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Ultra-realistic soft contact shadows
         this.container.appendChild(this.renderer.domElement);
 
         this.renderer.setClearColor(0x000000, 1); // Stay black initially
@@ -458,10 +498,18 @@ class DuarApp {
         });
 
         let startX = 0; let startY = 0; let startTime = 0;
+        this._isPointerDown = false;
+        this._pointerSpeed = 0;
+        let lastPointerX = 0; let lastPointerY = 0; let lastPointerTime = 0;
+
         window.addEventListener('pointerdown', (e) => {
             this.dismissIntro();
             startX = e.clientX; startY = e.clientY;
             startTime = performance.now();
+            this._isPointerDown = true;
+            lastPointerX = e.clientX; lastPointerY = e.clientY;
+            lastPointerTime = startTime;
+            this._pointerSpeed = 0;
             // Touch has no hover state — raycast on contact so a door's label appears the
             // instant you touch it, same moment a mouse user would see it on hover.
             this.onMouseMove(e);
@@ -470,11 +518,22 @@ class DuarApp {
             if (e.button === 1 || e.button === 2 || e.shiftKey) this.handlePointerDown(e);
         });
         window.addEventListener('pointermove', (e) => {
+            if (this._isPointerDown) {
+                const now = performance.now();
+                const dtP = Math.max(1, now - lastPointerTime);
+                const dist = Math.hypot(e.clientX - lastPointerX, e.clientY - lastPointerY);
+                this._pointerSpeed = (dist / dtP) * 1000;
+                lastPointerX = e.clientX;
+                lastPointerY = e.clientY;
+                lastPointerTime = now;
+            }
             // Lets a held/dragging finger "scrub" across doors and preview each label in turn.
             this.onMouseMove(e);
             if (this.draggedDoor) this.handleDoorDrag(e);
         });
         window.addEventListener('pointerup', (e) => {
+            this._isPointerDown = false;
+            this._pointerSpeed = 0;
             // Touch has no rest state after lifting — clear the preview so a label doesn't
             // stay stuck on screen. (If this same tap opens the door, isOpen keeps it visible.)
             if (e.pointerType === 'touch') this.hoveredDoor = null;
@@ -488,6 +547,10 @@ class DuarApp {
             const duration = performance.now() - startTime;
             // Strict intentional tap detection: ignores drag-releases, scrolls, or long holds (>350ms or >8px)
             if (dist < 8 && duration < 350) this.onClick(e);
+        });
+        window.addEventListener('pointercancel', () => {
+            this._isPointerDown = false;
+            this._pointerSpeed = 0;
         });
 
         this.createTimeControls();
@@ -681,6 +744,7 @@ class DuarApp {
             play: `<svg viewBox="0 0 24 24"><path d="M8 5.4L18.4 12 8 18.6Z"/></svg>`,
             art: `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`, // Art Gallery Frame Icon
             duar: `<svg viewBox="0 0 24 24"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16h14zM9 5h6v14H9V5zm4 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>`, // Door Icon
+            forest: `<svg viewBox="0 0 24 24"><path d="M12 2 5 13h4l-5 8h20l-5-8h4z"/><path d="M12 23v-4"/></svg>`, // Tree Icon
             instagram: `<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>`
         };
 
@@ -835,20 +899,20 @@ class DuarApp {
             this.daySpeed = 0;              // Stop motion
         });
 
-        // Art / Duar switch button in dock before instagram icon
+        // Cycles the three views: doors -> paintings -> forest -> doors. The icon
+        // and label always show the destination, not the current mode -- see
+        // destLabelFor()/nextViewMode() at module scope, the single source of
+        // truth this and the top-right toggle and the centre-click handler all share.
+        const destIconFor = (mode) => ({ default: icons.duar, portfolio: icons.art, forest: icons.forest }[nextViewMode(mode)]);
         const modeBtn = createBtn(
-            this.viewMode === 'portfolio' ? icons.duar : icons.art,
-            async () => {
-                const nextMode = this.viewMode === 'portfolio' ? 'default' : 'portfolio';
-                await this.switchView(nextMode);
-            },
-            this.viewMode === 'portfolio' ? 'Duar' : 'Art'
+            destIconFor(this.viewMode),
+            async () => { await this.switchView(nextViewMode(this.viewMode)); },
+            destLabelFor(this.viewMode)
         );
         this.dockModeBtn = modeBtn;
         this.updateDockModeBtn = () => {
-            const isArt = this.viewMode === 'portfolio';
-            modeBtn.innerHTML = isArt ? icons.duar : icons.art;
-            const label = isArt ? 'Duar' : 'Art';
+            const label = destLabelFor(this.viewMode);
+            modeBtn.innerHTML = destIconFor(this.viewMode);
             modeBtn.setAttribute('aria-label', label);
             const tip = document.createElement('span');
             tip.className = 'btn-tip';
@@ -1005,8 +1069,12 @@ class DuarApp {
     setMotionPaused(paused, { rotation = true } = {}) {
         this.motionPaused = !!paused;
         if (rotation) {
-            this.controls.autoRotate = !this.motionPaused;
-            if (!this.motionPaused) this.controls.autoRotateSpeed = -0.8;   // gentle CW
+            if (this.viewMode === 'forest') {
+                this.controls.autoRotate = false;
+            } else {
+                this.controls.autoRotate = !this.motionPaused;
+                if (!this.motionPaused) this.controls.autoRotateSpeed = -0.8;   // gentle CW
+            }
         }
 
         const btn = this.motionBtn;
@@ -1053,9 +1121,9 @@ class DuarApp {
         this.viewToggle = btn;
 
         const paint = () => {
-            const toArt = this.viewMode === 'default';
-            btn.textContent = toArt ? 'Paintings' : 'Doors';
-            btn.setAttribute('aria-label', toArt ? 'Switch to paintings' : 'Switch to doors');
+            const label = destLabelFor(this.viewMode);
+            btn.textContent = label;
+            btn.setAttribute('aria-label', `Switch to ${label.toLowerCase()}`);
         };
         paint();
 
@@ -1063,8 +1131,11 @@ class DuarApp {
             e.stopPropagation();
             if (this._switching) return;
             btn.disabled = true;
-            await this.switchView(this.viewMode === 'default' ? 'portfolio' : 'default');
-            paint();
+            // No paint() after this -- switchView() repaints this same button
+            // internally once this.viewMode actually changes, using the same
+            // destLabelFor() this closure does, so a second call here would only
+            // ever repeat what switchView already set.
+            await this.switchView(nextViewMode(this.viewMode));
             btn.disabled = false;
             this.resetUIHideTimer();
         });
@@ -1154,15 +1225,10 @@ class DuarApp {
                     interactedWithObject = true;
                     if (isCenterObj(hit.object)) {
                         this.setMotionPaused(true);
-                        if (!this._switching) {
-                            const nextMode = this.viewMode === 'default' ? 'portfolio' : 'default';
-                            this.switchView(nextMode);
-                            if (this.viewToggle) {
-                                const toArt = nextMode === 'default';
-                                this.viewToggle.textContent = toArt ? 'Paintings' : 'Doors';
-                                this.viewToggle.setAttribute('aria-label', toArt ? 'Switch to paintings' : 'Switch to doors');
-                            }
-                        }
+                        // Cycles doors -> paintings -> forest -> doors. switchView()
+                        // repaints the dock and top-right buttons itself once
+                        // this.viewMode changes, so there's nothing left to sync here.
+                        if (!this._switching) this.switchView(nextViewMode(this.viewMode));
                         return;
                     }
 
@@ -1176,7 +1242,9 @@ class DuarApp {
                     }
 
                     if (door) {
-                        if (door.isPainting) {
+                        if (door.isTree) {
+                            // Decorative -- no portal, no hinge, nothing to open.
+                        } else if (door.isPainting) {
                             if (this.activeDoor === door && !this.isTraveling) {
                                 const popup = document.getElementById('painting-popup');
                                 if (popup) popup.classList.toggle('open');
@@ -1647,8 +1715,12 @@ class DuarApp {
         }
 
         this.flyTo(camPos, target, 1.8, () => {
-            this.controls.autoRotate = true;
-            this.controls.autoRotateSpeed = -0.6;
+            if (this.viewMode !== 'forest') {
+                this.controls.autoRotate = true;
+                this.controls.autoRotateSpeed = -0.6;
+            } else {
+                this.controls.autoRotate = false;
+            }
         });
 
         // Fade rings back in slowly
@@ -1686,24 +1758,24 @@ class DuarApp {
         this.hemiLight = new THREE.HemisphereLight(0xfff3d8, 0x221c16, 0.28);
         this.scene.add(this.hemiLight);
 
-        const shadowRes = this.isMobile ? 512 : 1536;
+        const shadowRes = this.isMobile ? 1024 : 2048;
 
         this.sunDist = 1600;
-        this.sunLight = new THREE.DirectionalLight(0xfff2c8, 2.5); // Warmer, slightly yellower and brighter daylight
+        this.sunLight = new THREE.DirectionalLight(0xfff2c8, 2.5); // Warm solar light
         this.sunLight.castShadow = true;
-        this.sunLight.shadow.mapSize.width = shadowRes;
-        this.sunLight.shadow.mapSize.height = shadowRes;
-        this.sunLight.shadow.camera.near = 0.5;
-        this.sunLight.shadow.camera.far = 1000;
-        const d = 110; // Covers entire gallery
+        this.sunLight.shadow.mapSize.set(shadowRes, shadowRes);
+        this.sunLight.shadow.camera.near = 1.0;
+        this.sunLight.shadow.camera.far = 700;
+        const d = 75; // Covers all trees, rose, and terrain with high texel density
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
-        this.sunLight.shadow.bias = -0.0001;
-        this.sunLight.shadow.normalBias = 0.015;
-        this.sunLight.shadow.radius = 2.4; // Soft, natural shadow penumbra
+        this.sunLight.shadow.bias = -0.0003;
+        this.sunLight.shadow.normalBias = 0.025;
+        this.sunLight.shadow.radius = 2.0;
         this.scene.add(this.sunLight);
+        this.scene.add(this.sunLight.target);
 
         const sunTex = this.generateSunTexture();
         this.sunMesh = new THREE.Mesh(new THREE.SphereGeometry(44, 32, 32), new THREE.MeshStandardMaterial({
@@ -1720,18 +1792,18 @@ class DuarApp {
 
         this.moonLight = new THREE.DirectionalLight(0xc8d8e8, 1.4);
         this.moonLight.castShadow = true;
-        this.moonLight.shadow.mapSize.width = shadowRes;
-        this.moonLight.shadow.mapSize.height = shadowRes;
-        this.moonLight.shadow.camera.near = 0.5;
-        this.moonLight.shadow.camera.far = 1000;
-        this.moonLight.shadow.camera.left = -110;
-        this.moonLight.shadow.camera.right = 110;
-        this.moonLight.shadow.camera.top = 110;
-        this.moonLight.shadow.camera.bottom = -110;
-        this.moonLight.shadow.bias = -0.0001;
-        this.moonLight.shadow.normalBias = 0.015;
-        this.moonLight.shadow.radius = 2.4;
+        this.moonLight.shadow.mapSize.set(shadowRes, shadowRes);
+        this.moonLight.shadow.camera.near = 1.0;
+        this.moonLight.shadow.camera.far = 700;
+        this.moonLight.shadow.camera.left = -d;
+        this.moonLight.shadow.camera.right = d;
+        this.moonLight.shadow.camera.top = d;
+        this.moonLight.shadow.camera.bottom = -d;
+        this.moonLight.shadow.bias = -0.0003;
+        this.moonLight.shadow.normalBias = 0.025;
+        this.moonLight.shadow.radius = 2.0;
         this.scene.add(this.moonLight);
+        this.scene.add(this.moonLight.target);
 
         const moonTex = this.generateMoonTexture();
         this.moonMesh = new THREE.Mesh(new THREE.SphereGeometry(30, 32, 32), new THREE.MeshStandardMaterial({
@@ -1911,8 +1983,8 @@ class DuarApp {
     }
 
     setupEnvironment() {
-        // Circular Ground Plane: sized 20% larger (150m radius) with smooth outer horizon illusion fade
-        const groundGeo = new THREE.CircleGeometry(150, 96);
+        // Subdivided circular ground geometry: 64 radial concentric rings & 96 angular slices for 3D terrain topography
+        const groundGeo = new THREE.RingGeometry(0.001, 150, 96, 64);
         this.groundMat = new THREE.MeshStandardMaterial({
             color: 0x68645e,
             roughness: 1.0,
@@ -1926,9 +1998,37 @@ class DuarApp {
         });
 
         this.groundMat.onBeforeCompile = (shader) => {
+            shader.uniforms.uForestWave = forestGroundUniforms.uForestWave;
+            shader.uniforms.uForestActive = forestGroundUniforms.uForestActive;
+
             shader.vertexShader = `
+                uniform float uForestWave;
+                uniform float uForestActive;
                 varying vec3 vGroundWorldPos;
             \n` + shader.vertexShader;
+
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <begin_vertex>',
+                `
+                #include <begin_vertex>
+                // Radial ground emergence ripple travelling outward across the disc
+                float rDist = length(position.xy);
+                float waveFront = uForestWave * 145.0;
+                float distToWave = rDist - waveFront;
+                float ripple = sin(clamp(distToWave * 0.22, -3.14, 3.14)) * exp(-distToWave * distToWave * 0.006) * 0.85 * uForestActive * (1.0 - uForestWave * 0.45);
+
+                // Uneven organic forest terrain topography (matches getForestElevation)
+                float worldZ = -position.y;
+                float clearingFactor = smoothstep(1.5, 12.0, rDist);
+                float hill1 = sin(position.x * 0.045 + 0.5) * cos(worldZ * 0.040 + 0.8) * 0.65;
+                float hill2 = sin(position.x * 0.095 - worldZ * 0.08) * 0.35;
+                float hill3 = cos(position.x * 0.18 + worldZ * 0.15) * 0.18;
+                float micro = sin(position.x * 0.38) * cos(worldZ * 0.35) * 0.08;
+                float terrainHeight = (hill1 + hill2 + hill3 + micro) * clearingFactor * uForestActive;
+
+                transformed.z += ripple + terrainHeight;
+                `
+            );
 
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <worldpos_vertex>',
@@ -1939,6 +2039,8 @@ class DuarApp {
             );
 
             shader.fragmentShader = `
+                uniform float uForestWave;
+                uniform float uForestActive;
                 varying vec3 vGroundWorldPos;
             \n` + shader.fragmentShader;
 
@@ -1950,6 +2052,38 @@ class DuarApp {
                 float r = length(vGroundWorldPos.xz);
                 float edgeFade = 1.0 - smoothstep(112.0, 150.0, r);
                 gl_FragColor.a *= edgeFade;
+
+                // Uneven muddy patches and damp earth pooling in the forest
+                if (uForestActive > 0.01) {
+                    vec2 mPos = vGroundWorldPos.xz * 0.08;
+                    float mudPool = sin(mPos.x * 2.1 + sin(mPos.y * 1.8)) * cos(mPos.y * 1.9 + sin(mPos.x * 2.3));
+                    float microMud = sin(vGroundWorldPos.x * 0.42) * cos(vGroundWorldPos.z * 0.42) * 0.5;
+                    float mudVal = smoothstep(0.12, 0.68, mudPool * 0.75 + microMud * 0.25);
+                    
+                    // Dark damp muddy silt and deep wet earth
+                    vec3 drySoil = vec3(0.26, 0.22, 0.16);
+                    vec3 wetMud = vec3(0.08, 0.06, 0.04);
+                    vec3 deepSilt = vec3(0.035, 0.024, 0.016);
+
+                    vec3 mudColor = mix(drySoil, wetMud, mudVal);
+                    mudColor = mix(mudColor, deepSilt, pow(mudVal, 2.2));
+
+                    // Modulate floor with damp muddy patches
+                    gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * mudColor * 2.8, mudVal * 0.72 * uForestActive);
+
+                    // Wet muddy sheen under light
+                    float wetGleam = pow(max(0.0, mudVal), 3.0) * 0.18 * uForestActive;
+                    gl_FragColor.rgb += vec3(wetGleam * 0.65, wetGleam * 0.80, wetGleam);
+                }
+
+                // Bioluminescent life ring along the active ground wave
+                if (uForestActive > 0.01) {
+                    float waveFront = uForestWave * 145.0;
+                    float distToWave = abs(r - waveFront);
+                    float edgeGlow = exp(-distToWave * distToWave * 0.015) * (1.0 - uForestWave * 0.7);
+                    gl_FragColor.rgb += vec3(0.22, 0.42, 0.16) * edgeGlow * uForestActive;
+                }
+
                 if (gl_FragColor.a <= 0.002) discard;
                 `
             );
@@ -1959,6 +2093,7 @@ class DuarApp {
         ground.rotation.x = -Math.PI / 2;
         ground.receiveShadow = true;
         this.scene.add(ground);
+        this.groundMesh = ground;
 
         this.createSacredGeometry();
         this.createCentralRock();
@@ -2031,7 +2166,8 @@ class DuarApp {
                 // Identity, not name: only the two module-level shared assets survive.
                 // Matching on name === 'Frame' also spared the per-door lintel and base
                 // geometries, which leaked ~119 geometries per view switch.
-                if (obj.geometry && obj.geometry !== unitBox && obj.geometry !== unitPlane) obj.geometry.dispose();
+                const sharedGeo = obj.geometry === unitBox || obj.geometry === unitPlane || sharedForestGeometries.has(obj.geometry);
+                if (obj.geometry && !sharedGeo) obj.geometry.dispose();
                 if (obj.material && obj.material !== frameMaterial) {
                     // Painting textures are already released above and shared across
                     // tiers, so only dispose maps the streamer doesn't own.
@@ -2049,6 +2185,32 @@ class DuarApp {
         resetTextureStreaming();
     }
 
+    // Scale one centrepiece object in from nothing, back.out for a bit of pop.
+    _showCenterpiece(obj) {
+        if (!obj) return;
+        gsap.killTweensOf(obj.scale);
+        obj.visible = true;
+        if (obj === this.roseCenterpiece) {
+            obj.scale.set(0.001, 0.001, 0.001);
+            gsap.to(obj.scale, { y: 1, duration: 2.2, ease: 'power2.out', delay: 0.1 });
+            gsap.to(obj.scale, { x: 1, z: 1, duration: 1.9, ease: 'back.out(1.2)', delay: 0.4 });
+        } else {
+            obj.scale.setScalar(0.001);
+            gsap.to(obj.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.3)', delay: 0.2 });
+        }
+    }
+
+    // Scale one centrepiece object down to nothing, then hide it -- visible
+    // stays true for the length of the tween so it's still there to shrink.
+    _hideCenterpiece(obj) {
+        if (!obj || !obj.visible) return;
+        gsap.killTweensOf(obj.scale);
+        gsap.to(obj.scale, {
+            x: 0.001, y: 0.001, z: 0.001, duration: 0.4, ease: 'power2.in',
+            onComplete: () => { obj.visible = false; }
+        });
+    }
+
     // Fade the current doors out, build the new world, fade it in. Staggered
     // outward from the centre so it reads as the world responding, not a refresh.
     async switchView(mode) {
@@ -2063,8 +2225,9 @@ class DuarApp {
             this.updateDockModeBtn();
         }
         if (this.viewToggle) {
-            this.viewToggle.textContent = mode === 'default' ? 'Paintings' : 'Doors';
-            this.viewToggle.setAttribute('aria-label', mode === 'default' ? 'Switch to paintings' : 'Switch to doors');
+            const label = destLabelFor(mode);
+            this.viewToggle.textContent = label;
+            this.viewToggle.setAttribute('aria-label', `Switch to ${label.toLowerCase()}`);
         }
 
         // Paintings are unlit and untone-mapped, so their pixels reach the bloom pass
@@ -2083,36 +2246,69 @@ class DuarApp {
                 .slice(0, 6)
                 .forEach((d) => requestTier(d, TIER.MID));
             gsap.to(this.bloomPass, { threshold: 0.92, strength: 0.20, duration: 0.6 });
-            if (this.rock) {
-                gsap.to(this.rock.scale, {
-                    x: 0.001, y: 0.001, z: 0.001, duration: 0.4, ease: 'power2.in',
-                    onComplete: () => { this.rock.visible = false; }
-                });
-            }
-            if (this.sculpture) {
-                this.sculpture.visible = true;
-                this.sculpture.scale.setScalar(0.001);
-                gsap.to(this.sculpture.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.3)', delay: 0.2 });
-            }
+        } else if (mode === 'forest') {
+            this.controls.autoRotate = false;
+            this.updateRingGeometries(false);
+            gsap.to(this.bloomPass, { threshold: 0.88, strength: 0.18, duration: 0.6 });
         } else {
+            if (!this.motionPaused) this.controls.autoRotate = true;
             this.updateRingGeometries(false);
             gsap.to(this.bloomPass, {
                 threshold: this._bloomDefaults.threshold,
                 strength: this._bloomDefaults.strength,
                 duration: 0.6
             });
-            if (this.sculpture) {
-                gsap.to(this.sculpture.scale, {
-                    x: 0.001, y: 0.001, z: 0.001, duration: 0.4, ease: 'power2.in',
-                    onComplete: () => { this.sculpture.visible = false; }
-                });
-            }
-            if (this.rock) {
-                this.rock.visible = true;
-                this.rock.scale.setScalar(0.001);
-                gsap.to(this.rock.scale, { x: 1, y: 1, z: 1, duration: 0.8, ease: 'back.out(1.3)', delay: 0.2 });
+        }
+
+        // The rings themselves stay visible for doors/paintings -- both already
+        // read as staged/geometric -- but a forest floor with its own grass and
+        // undergrowth doesn't want a drafting-compass circle drawn on it.
+        if (this.rings) this.rings.forEach(r => { r.mesh.visible = mode !== 'forest'; });
+
+        // Forest mode swaps a mottled earth-and-litter map onto the existing
+        // ground plane rather than adding a second disc over it, so the scene's
+        // own day/night colour ramp keeps multiplying over the texture and the
+        // floor still darkens into night with everything else.
+        if (this.groundMat) {
+            if (mode === 'forest') {
+                this.groundMat.map = getForestGroundTexture();
+                this.groundMat.needsUpdate = true;
+            } else {
+                if (forestGroundUniforms.uForestActive.value > 0) {
+                    gsap.to(forestGroundUniforms.uForestActive, {
+                        value: 0.0,
+                        duration: 0.5,
+                        onComplete: () => {
+                            forestGroundUniforms.uForestWave.value = 0.0;
+                            if (this.groundMat) {
+                                this.groundMat.map = null;
+                                this.groundMat.needsUpdate = true;
+                            }
+                        }
+                    });
+                } else {
+                    this.groundMat.map = null;
+                    this.groundMat.needsUpdate = true;
+                }
             }
         }
+
+        // Atmospheric depth: deepen fog in forest mode so distant trees dissolve
+        // into atmospheric mist, restored to 0.002 in geometric modes.
+        if (this.scene.fog) {
+            const targetDensity = mode === 'forest' ? 0.0075 : 0.002;
+            gsap.to(this.scene.fog, { density: targetDensity, duration: 0.8 });
+        }
+
+        // One of three centrepieces is visible at a time: the chrome cone
+        // (default), the ceramic sculpture (portfolio), or a single rose on a
+        // stem (forest). _showCenterpiece/_hideCenterpiece just wrap the same
+        // scale-in/scale-out tween for whichever objects need which today.
+        const activeCenterpiece = { default: this.rock, portfolio: this.sculpture, forest: this.roseCenterpiece }[mode];
+        [this.rock, this.sculpture, this.roseCenterpiece].forEach((obj) => {
+            if (obj === activeCenterpiece) this._showCenterpiece(obj);
+            else this._hideCenterpiece(obj);
+        });
 
         this.resetScene();
 
@@ -2134,19 +2330,81 @@ class DuarApp {
         this.clearDoors();
 
         if (mode === 'portfolio') await this.buildPortfolioDoors();
+        else if (mode === 'forest') this.buildForest();
         else this.setupDoors();
 
-        // Grow the new set in from nothing, nearest first.
-        this.doors
-            .slice()
-            .sort((a, b) => a.group.position.lengthSq() - b.group.position.lengthSq())
-            .forEach((door, i) => {
-                door.group.scale.setScalar(0.001);
-                gsap.to(door.group.scale, {
-                    x: 1, y: 1, z: 1,
-                    duration: 0.7, ease: 'back.out(1.4)', delay: i * 0.035
-                });
+        if (mode === 'forest') {
+            // Animate ground life wave & meadow grass sprouting outward across the terrain
+            forestGroundUniforms.uForestActive.value = 1.0;
+            forestGroundUniforms.uForestWave.value = 0.0;
+            gsap.to(forestGroundUniforms.uForestWave, {
+                value: 1.0,
+                duration: 3.6,
+                ease: 'power1.out'
             });
+
+            forestWindUniforms.uGrassGrowth.value = 0.0;
+            gsap.to(forestWindUniforms.uGrassGrowth, {
+                value: 1.0,
+                duration: 3.6,
+                ease: 'power1.out'
+            });
+
+            // Trees emerge slowly and gracefully behind the expanding ground wave
+            this.doors
+                .slice()
+                .sort((a, b) => a.group.position.lengthSq() - b.group.position.lengthSq())
+                .forEach((door) => {
+                    if (door.group.name === 'ForestGrass') {
+                        door.group.scale.set(1, 1, 1);
+                        return;
+                    }
+                    const dist = Math.sqrt(door.group.position.lengthSq());
+                    // Base delay times emergence to the ground wave passing the trunk
+                    const baseDelay = 0.25 + (dist / 120.0) * 2.2 + (Math.sin(door.group.position.x * 2.1) * 0.12);
+                    const targetRotY = door.group.rotation.y;
+
+                    door.group.scale.set(0.001, 0.001, 0.001);
+                    door.group.rotation.y = targetRotY - 0.22;
+
+                    // 1. Trunk emerges slowly upward from the soil
+                    gsap.to(door.group.scale, {
+                        y: 1.0,
+                        duration: 2.4,
+                        ease: 'power2.out',
+                        delay: baseDelay
+                    });
+
+                    // 2. Canopy branches and foliage unfurl and pop outward
+                    gsap.to(door.group.scale, {
+                        x: 1.0,
+                        z: 1.0,
+                        duration: 2.1,
+                        ease: 'back.out(1.22)',
+                        delay: baseDelay + 0.35
+                    });
+
+                    // 3. Gentle organic twist as roots anchor
+                    gsap.to(door.group.rotation, {
+                        y: targetRotY,
+                        duration: 2.5,
+                        ease: 'power2.out',
+                        delay: baseDelay
+                    });
+                });
+        } else {
+            // Standard doors / paintings pop
+            this.doors
+                .slice()
+                .sort((a, b) => a.group.position.lengthSq() - b.group.position.lengthSq())
+                .forEach((door, i) => {
+                    door.group.scale.setScalar(0.001);
+                    gsap.to(door.group.scale, {
+                        x: 1, y: 1, z: 1,
+                        duration: 0.7, ease: 'back.out(1.4)', delay: i * 0.035
+                    });
+                });
+        }
 
         this._switching = false;
     }
@@ -2233,6 +2491,54 @@ class DuarApp {
             this._doorsReady = true;
             this._maybeStartIntro();
         }
+    }
+
+    // Same ring positions as the other two views (layoutForest() shares
+    // layout.js's BASE_RADIUS/RING_SPACING), populated with trees instead of
+    // doors or paintings. Trees join this.doors with isTree: true so they get
+    // clearDoors() teardown and the fade-out/grow-in transition for free, same
+    // as every other view -- see the guards for d.isTree in onClick() and the
+    // billboard loop in animate(), which are what keep a tree from being treated
+    // like a clickable, camera-facing door once it's sitting in that array.
+    buildForest() {
+        layoutForest().forEach(({ species, x, z, angle, seed, scale }) => {
+            const group = createTree(species, { seed, scale });
+            const groundY = getForestElevation(x, z);
+            group.position.set(x, groundY, z);
+            group.rotation.y = angle; // faces outward from centre, not the camera
+            this.scene.add(group);
+
+            this.doors.push({
+                group,
+                isTree: true,
+                isOpen: false,
+                swayGroup: group.userData.swayGroup,
+                swayAmplitude: group.userData.swayAmplitude,
+                swayFreqMult: group.userData.swayFreqMult,
+                swayPhase: Math.sin(seed * 12.9898) * Math.PI, // deterministic, not Math.random()
+            });
+        });
+
+        // Floor cover: one static grass field plus a scatter of shrubs
+        const { grass, shrubs } = createForestFloor();
+        this.scene.add(grass);
+        this.doors.push({ group: grass, isTree: true, isOpen: false });
+        shrubs.forEach((shrub) => {
+            const groundY = getForestElevation(shrub.position.x, shrub.position.z);
+            shrub.position.y = groundY;
+            this.scene.add(shrub);
+            this.doors.push({
+                group: shrub,
+                isTree: true,
+                isOpen: false,
+                swayGroup: shrub.userData.swayGroup,
+                swayAmplitude: shrub.userData.swayAmplitude,
+                swayFreqMult: shrub.userData.swayFreqMult,
+                swayPhase: Math.sin(shrub.userData.seed * 12.9898) * Math.PI,
+            });
+        });
+
+        this._hoverTargets = null; // trees carry no portalHitbox, so nothing new to add here
     }
 
     // Fly to a painting and centre it, framed so the whole work is on screen.
@@ -2521,6 +2827,13 @@ class DuarApp {
         this.sculpture = createCeramicSculpture(this.loadingManager);
         this.sculpture.visible = false;
         this.scene.add(this.sculpture);
+
+        // A single red rose stands in for the cone/sculpture in forest mode --
+        // built once and toggled visible like the other two, not rebuilt per
+        // view switch.
+        this.roseCenterpiece = createRoseCenterpiece();
+        this.roseCenterpiece.visible = false;
+        this.scene.add(this.roseCenterpiece);
     }
 
     setupDustMotes() {
@@ -2609,14 +2922,30 @@ class DuarApp {
             this.sunMesh.visible = sunFade > 0.001;
 
             // True solar / lunar altitude checks
+            // True solar / lunar altitude checks
             const isSunActive = sky.sunAlt > 0.01;
-            const isMoonActive = sky.cel.moonAlt > 0.01;
 
-            // Direct directional light intensity matching atmospheric absorption
-            this.sunLight.intensity = isSunActive ? (sky.sH * 1.55) : 0;
-            this.moonLight.intensity = (!isSunActive && isMoonActive) ? (sky.mH * 1.15) : 0;
-            this.sunLight.castShadow = isSunActive;
-            this.moonLight.castShadow = !isSunActive && isMoonActive;
+            if (isSunActive) {
+                // Daytime: sunLight is active and casts crisp, warm shadows
+                this.sunLight.intensity = Math.max(1.8, sky.sH * 2.2);
+                this.sunLight.castShadow = true;
+                this.moonLight.intensity = 0;
+                this.moonLight.castShadow = false;
+            } else {
+                // Nighttime: moonlight is ALWAYS active and casts crisp, cool nocturnal shadows across everything!
+                this.sunLight.intensity = 0;
+                this.sunLight.castShadow = false;
+                this.moonLight.intensity = Math.max(1.35, sky.mH * 1.8);
+                this.moonLight.castShadow = true;
+
+                // Ensure night shadow-casting light is well elevated (minimum altitude angle)
+                // so long, crisp shadows stretch across trees, rose, and terrain even if astronomical moon is low
+                const moonX = sky.cel.moonPos.x || 120;
+                const moonZ = sky.cel.moonPos.z || 120;
+                const elevY = Math.max(160, Math.abs(sky.cel.moonPos.y));
+                _moonDirScratch.set(moonX, elevY, moonZ).normalize().multiplyScalar(320);
+                this.moonLight.position.copy(_moonDirScratch);
+            }
 
             const angleMod = ((this.sunAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
             const transitionZone = Math.PI / 3;
@@ -2682,30 +3011,38 @@ class DuarApp {
             if (this.scene.fog) this.scene.fog.color.copy(_horizColScratch);
 
             // Ambient sky & earth bounce light: maintains ground and sculpture visibility while keeping shadows deep
+            const hemiGroundNight = this.viewMode === 'forest' ? C_HEMI_FOREST_GROUND_NIGHT : C_HEMI_GROUND_NIGHT;
+            const hemiGroundDay = this.viewMode === 'forest' ? C_HEMI_FOREST_GROUND_DAY : C_HEMI_GROUND_DAY;
             this.hemiLight.intensity = 0.07 + (sky.sH * 0.15) + (sky.mH * 0.12);
             this.hemiLight.color.lerpColors(C_HEMI_NIGHT, C_HEMI_DAY, sky.sH);
-            this.hemiLight.groundColor.lerpColors(C_HEMI_GROUND_NIGHT, C_HEMI_GROUND_DAY, sky.sH);
+            this.hemiLight.groundColor.lerpColors(hemiGroundNight, hemiGroundDay, sky.sH);
 
             // Real-time floor color transition: Peak daytime -> Off-white; Midnight -> Royal navy blue
+            // (forest mode swaps in the mossy palette above instead, same quadrant timing)
             if (this.groundMat) {
                 const Q = Math.PI / 2;
+                const inForest = this.viewMode === 'forest';
+                const dawn = inForest ? C_FLOOR_FOREST_DAWN : C_FLOOR_DAWN;
+                const noon = inForest ? C_FLOOR_FOREST_NOON : C_FLOOR_NOON;
+                const twilight = inForest ? C_FLOOR_FOREST_TWILIGHT : C_FLOOR_TWILIGHT;
+                const midnight = inForest ? C_FLOOR_FOREST_MIDNIGHT : C_FLOOR_MIDNIGHT;
 
                 if (angleMod >= 0 && angleMod < Q) {
-                    // Sunrise -> Noon (Dawn Slate -> Off-White)
+                    // Sunrise -> Noon
                     const t = angleMod / Q;
-                    this.groundMat.color.lerpColors(C_FLOOR_DAWN, C_FLOOR_NOON, t);
+                    this.groundMat.color.lerpColors(dawn, noon, t);
                 } else if (angleMod >= Q && angleMod < Math.PI) {
-                    // Noon -> Sunset (Off-White -> Twilight Slate Blue)
+                    // Noon -> Sunset
                     const t = (angleMod - Q) / Q;
-                    this.groundMat.color.lerpColors(C_FLOOR_NOON, C_FLOOR_TWILIGHT, t);
+                    this.groundMat.color.lerpColors(noon, twilight, t);
                 } else if (angleMod >= Math.PI && angleMod < Math.PI * 1.5) {
-                    // Sunset -> Midnight (Twilight Slate Blue -> Royal Navy Blue)
+                    // Sunset -> Midnight
                     const t = (angleMod - Math.PI) / Q;
-                    this.groundMat.color.lerpColors(C_FLOOR_TWILIGHT, C_FLOOR_MIDNIGHT, t);
+                    this.groundMat.color.lerpColors(twilight, midnight, t);
                 } else {
-                    // Midnight -> Sunrise (Royal Navy Blue -> Dawn Slate)
+                    // Midnight -> Sunrise
                     const t = (angleMod - Math.PI * 1.5) / Q;
-                    this.groundMat.color.lerpColors(C_FLOOR_MIDNIGHT, C_FLOOR_DAWN, t);
+                    this.groundMat.color.lerpColors(midnight, dawn, t);
                 }
             }
         }
@@ -2717,8 +3054,58 @@ class DuarApp {
         // "pause everything" now genuinely covers the rings, which it didn't before.
         if (!this.motionPaused && this.rings) this.rings.forEach(r => r.mesh.rotation.z += r.speed);
         if (this.rock && this.rock.visible) {
-            this.rock.position.y = 0;
-            this.rock.rotation.set(0, 0, 0); // Locked to ground
+            if (this.viewMode === 'forest') {
+                this.rock.visible = false;
+            } else {
+                this.rock.position.y = 0;
+                this.rock.rotation.set(0, 0, 0); // Locked to ground
+            }
+        }
+        // Universal camera rotation and velocity calculation
+        const curCamAngle = Math.atan2(this.camera.position.x, this.camera.position.z);
+        if (this._lastCamAngle === undefined) this._lastCamAngle = curCamAngle;
+        let dAngle = curCamAngle - this._lastCamAngle;
+        while (dAngle > Math.PI) dAngle -= Math.PI * 2;
+        while (dAngle < -Math.PI) dAngle += Math.PI * 2;
+        this._lastCamAngle = curCamAngle;
+
+        const angularVelocity = dAngle / Math.max(0.001, dt);
+        const angularSpeed = Math.abs(angularVelocity);
+
+        if (!this._lastCamPos) this._lastCamPos = this.camera.position.clone();
+        const camDeltaDist = this.camera.position.distanceTo(this._lastCamPos);
+        this._lastCamPos.copy(this.camera.position);
+        const camSpeed = camDeltaDist / Math.max(0.001, dt);
+
+        // Wind engine: dead calm by default. ONLY triggers on fast rotation or drags.
+        const rotStimulus = Math.max(0, angularSpeed - 0.28) * 1.6;
+        const camStimulus = Math.max(0, (camSpeed - 2.2) * 0.12);
+        const dragStimulus = this._isPointerDown ? Math.max(0, (this._pointerSpeed - 280) * 0.003) : 0;
+        const targetForestMotion = Math.min(2.0, Math.max(rotStimulus, camStimulus, dragStimulus));
+
+        if (this._forestDragMotion === undefined) this._forestDragMotion = 0;
+        const lerpRate = targetForestMotion > this._forestDragMotion ? 0.22 : 0.045;
+        this._forestDragMotion = THREE.MathUtils.lerp(this._forestDragMotion, targetForestMotion, lerpRate);
+        if (this._forestDragMotion < 0.001) this._forestDragMotion = 0;
+
+        if (this.roseCenterpiece && this.roseCenterpiece.visible) {
+            this.roseCenterpiece.position.y = 0;
+            this.roseCenterpiece.rotation.y = 0; // stem is locked; only the bloom sways
+            const bloom = this.roseCenterpiece.userData.swayGroup;
+            if (bloom) {
+                const amp = this.roseCenterpiece.userData.swayAmplitude;
+                const freq = this.roseCenterpiece.userData.swayFreqMult ?? 1;
+                const motion = this._forestDragMotion;
+                bloom.rotation.z = Math.sin(this.time * 24 * freq) * amp * motion;
+                bloom.rotation.x = Math.cos(this.time * 18 * freq + 1.3) * amp * 0.6 * motion;
+            }
+            const motes = this.roseCenterpiece.userData.motes;
+            if (motes) {
+                motes.rotation.y = this.time * 0.25;
+            }
+        }
+        if (this.viewMode === 'forest') {
+            updateForestWind(this.time * 24, this._forestDragMotion * 0.85);
         }
         if (this.sculpture && this.sculpture.visible) {
             this.sculpture.position.y = 0;
@@ -2729,15 +3116,6 @@ class DuarApp {
                 const u = this.sculpture.userData.threadUniforms;
                 u.uTime.value = this.time;
 
-                const curCamAngle = Math.atan2(this.camera.position.x, this.camera.position.z);
-                if (this._lastCamAngle === undefined) this._lastCamAngle = curCamAngle;
-                let dAngle = curCamAngle - this._lastCamAngle;
-                while (dAngle > Math.PI) dAngle -= Math.PI * 2;
-                while (dAngle < -Math.PI) dAngle += Math.PI * 2;
-                this._lastCamAngle = curCamAngle;
-
-                const angularVelocity = dAngle / Math.max(0.001, dt);
-                const angularSpeed = Math.abs(angularVelocity);
                 if (this._threadMotion === undefined) this._threadMotion = 0;
                 const targetMotion = Math.min(1.8, angularSpeed * 1.3);
                 const lerpSpeed = targetMotion > this._threadMotion ? 0.14 : 0.05;
@@ -2824,12 +3202,40 @@ class DuarApp {
 
         // Billboarding - Only lookAt camera if not traveling
         if (!this.isTraveling) {
-            this.doors.forEach(d => d.group.lookAt(this.camera.position.x, d.group.position.y, this.camera.position.z));
+            this.doors.forEach(d => {
+                if (d.isTree) {
+                    // A tree is real 3D geometry, not a camera-facing panel -- it
+                    // should hold its planted orientation, not spin to face the
+                    // viewer. Its canopy sways instead, one rigid mass rocking
+                    // gently rather than a per-leaf ripple: right for something
+                    // built from a handful of instanced blobs, not individual leaves.
+                    if (d.swayGroup) {
+                        // this.time advances by a flat 0.001/frame, not by real
+                        // elapsed seconds (see animate(), a few lines up) -- these
+                        // multipliers are chosen for a ~4-6s sway period at 60fps,
+                        // not copied from the thread shader's much smaller ones,
+                        // which read as barely-there specifically because they
+                        // rely on camera-drag response for most of their visible
+                        // motion rather than this base idle rate. swayFreqMult is
+                        // per-species (peepal's leaves famously tremble faster than
+                        // a heavier mango canopy does) and defaults to 1 for
+                        // objects that don't set it, like shrubs.
+                        // Trees are solid, grounded monuments with zero shaking
+                        d.swayGroup.rotation.set(0, 0, 0);
+                    }
+                    return;
+                }
+                d.group.lookAt(this.camera.position.x, d.group.position.y, this.camera.position.z);
+            });
         }
 
         if (this._hoverDirty) {
             this._hoverDirty = false;
             this.checkHover();
+        }
+
+        if (this.viewMode === 'forest') {
+            this.controls.autoRotate = false;
         }
 
         this.controls.update();
