@@ -1,4 +1,4 @@
-const CACHE = 'duar-v4';
+const CACHE = 'duar-v5';
 const APP_SHELL = [
     './',
     './index.html',

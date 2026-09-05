@@ -3251,11 +3251,12 @@ class DuarApp {
 }
 new DuarApp();
 
-// Service Worker Registration for Auto-Update
+// Service Worker Registration for Auto-Update (production only; dev unregisters to prevent stale caching)
 if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').then(registration => {
-            console.log('SW registered:', registration);
+    if (import.meta.env.PROD) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register(getAssetUrl('sw.js')).then(registration => {
+                console.log('SW registered:', registration);
 
             // Check for updates every minute (optional but good for long sessions)
             setInterval(() => {
@@ -3295,4 +3296,10 @@ if ('serviceWorker' in navigator) {
             refreshing = true;
         });
     });
+} else {
+    // Development mode: unregister any leftover service workers so Vite HMR and dynamic imports never get served stale caches
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+        for (const r of registrations) r.unregister();
+    });
+}
 }
