@@ -9,4 +9,13 @@ export default defineConfig({
     // in production. 'mpa' turns the fallback off so directory indexes resolve here
     // exactly as they do when deployed.
     appType: 'mpa',
+    build: {
+        rollupOptions: {
+            output: {
+                entryFileNames: 'assets/bundle.js',
+                chunkFileNames: 'assets/[name].js',
+                assetFileNames: 'assets/[name].[ext]'
+            }
+        }
+    }
 });

@@ -858,7 +858,13 @@
     </div>
   </div>
 
-  <script type="module" src="/main.js"></script>
+  <script type="module">
+    if (window.location.port === '5173' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      import('./main.js');
+    } else {
+      import('./assets/bundle.js');
+    }
+  </script>
   <script>
     // Reveal will be controlled by DuarApp in main.js using LoadingManager
   </script>

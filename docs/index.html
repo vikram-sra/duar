@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Duar" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="icon" type="image/png" href="./favicon.png" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <meta name="description" content="Paintings by Vikram Sra, a Sikh Punjabi painter in Toronto. Born and raised in Punjab, he changed countries at eighteen. The work is the formless spaces within - the worlds that stay hidden until someone gives them the quiet attention they need to take shape. Walk the gallery in 3D, or read the work as a list." />
+  <title>Vikram Sra &mdash; Duar</title>
+  <link rel="canonical" href="https://duar.one/" />
+
+  <!-- Share card. Without these the link arrives in a curator's inbox as a bare URL. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Duar" />
+  <meta property="og:title" content="Vikram Sra &mdash; Duar" />
+  <meta property="og:description" content="Paintings by Vikram Sra, a Sikh Punjabi painter in Toronto. A gallery you walk through, under a sky that keeps real time." />
+  <meta property="og:url" content="https://duar.one/" />
+  <meta property="og:image" content="https://duar.one/social/og-card.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Painting: Flowers Unnamed by Vikram Sra" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Vikram Sra &mdash; Duar" />
+  <meta name="twitter:description" content="Paintings by Vikram Sra, a Sikh Punjabi painter in Toronto. A gallery you walk through, under a sky that keeps real time." />
+  <meta name="twitter:image" content="https://duar.one/social/og-card.jpg" />
+  <style>
+    /* This page is a 3D scene, not a document: a long press should orbit the camera,
+       not raise a text-selection loupe or an image callout, and a double-tap should
+       not zoom the page out from under the canvas. The flat /work and /about pages
+       set none of this - there, selecting and zooming text is the point. */
+    html, body {
+      touch-action: none;
+      overscroll-behavior: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    canvas {
+      touch-action: none;
+      -webkit-user-drag: none;
+      user-select: none;
+    }
+    img {
+      -webkit-user-drag: none;
+      user-drag: none;
+    }
+    /* The one exception: painting details are there to be read and quoted. */
+    #painting-popup-card,
+    #painting-popup-card * {
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: default;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: radial-gradient(circle at center, #3a4b60 0%, #1e2530 100%);
+      font-family: 'Outfit', sans-serif;
+      cursor: crosshair;
+    }
+
+    #app {
+      width: 100vw;
+      height: 100dvh;
+      touch-action: none;
+      /* Prevent browser scrolling/gestures */
+    }
+
+    .ui-overlay {
+      position: absolute;
+      top: calc(50px + env(safe-area-inset-top));
+      left: calc(50px + env(safe-area-inset-left));
+      color: white;
+      pointer-events: none;
+      text-shadow: 0 8px 16px rgba(0, 0, 0, 0.6);
+      z-index: 10;
+      opacity: 0;
+      animation: fadeInSlide 2s cubic-bezier(0.165, 0.84, 0.44, 1) forwards 0.3s;
+    }
+
+    @keyframes fadeInSlide {
+      from {
+        opacity: 0;
+        transform: translateY(-30px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    h1 {
+      margin: 0 0 6px 0;
+      font-family: 'Outfit', sans-serif;
+      font-size: 1.05rem;
+      letter-spacing: 0.15rem;
+      font-weight: 200;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #fff 0%, #ffd1a4 50%, #ff9a76 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 4px 8px rgba(255, 154, 118, 0.3));
+      animation: shimmer 3s ease-in-out infinite;
+    }
+
+    @keyframes shimmer {
+
+      0%,
+      100% {
+        filter: drop-shadow(0 4px 8px rgba(255, 154, 118, 0.3));
+      }
+
+      50% {
+        filter: drop-shadow(0 4px 16px rgba(255, 154, 118, 0.6));
+      }
+    }
+
+    .ui-overlay p {
+      font-size: 1.05rem;
+      letter-spacing: 0.15rem;
+      font-weight: 300;
+      opacity: 0.9;
+      color: #ffd1a4;
+    }
+
+    #reticle {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0);
+      width: 10px;
+      height: 10px;
+      background: #e32b2b;
+      border-radius: 50%;
+      z-index: 9000;
+      pointer-events: none;
+      cursor: pointer;
+      opacity: 0;
+      transition: none;
+      box-shadow: 0 0 0 2px rgba(227,43,43,0.25), 0 0 12px rgba(227,43,43,0.5);
+    }
+
+    #reticle.visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+      pointer-events: auto;
+    }
+
+    #reticle:hover {
+      box-shadow: 0 0 0 3px rgba(255,80,80,0.4), 0 0 20px rgba(255,80,80,0.7);
+      background: #ff3333;
+    }
+
+    /* Pulsing ring around the travel dot */
+    .reticle-ring {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 44px;
+      height: 44px;
+      margin: -22px 0 0 -22px;
+      border: 1.5px solid rgba(227, 43, 43, 0.55);
+      border-radius: 50%;
+      pointer-events: none;
+      animation: reticlePulse 1.8s ease-out infinite;
+    }
+
+    @keyframes reticlePulse {
+      0% { transform: scale(0.6); opacity: 0.9; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+
+    /* Entered door's name, above the dot */
+    .reticle-title {
+      position: absolute;
+      bottom: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #fff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.3rem;
+      text-indent: 0.3rem;
+      white-space: nowrap;
+      pointer-events: none;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85), 0 0 14px rgba(227, 43, 43, 0.5);
+      opacity: 0.95;
+    }
+
+    /* "ENTER" cue under the dot */
+    .reticle-label {
+      position: absolute;
+      top: 52px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #fff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.35rem;
+      text-indent: 0.35rem;
+      white-space: nowrap;
+      pointer-events: none;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8), 0 0 12px rgba(227, 43, 43, 0.6);
+      opacity: 0.9;
+    }
+
+    /* Entry refusal: nothing is built behind the doors yet, so the Enter dot
+       head-shakes and says so. Keyframes must carry the -50% centring, or the
+       label jumps left the moment the animation takes over. */
+    @keyframes reticleRefuse {
+      0%, 100% { transform: translateX(-50%); }
+      15%      { transform: translateX(calc(-50% - 6px)); }
+      30%      { transform: translateX(calc(-50% + 6px)); }
+      45%      { transform: translateX(calc(-50% - 4px)); }
+      60%      { transform: translateX(calc(-50% + 4px)); }
+      80%      { transform: translateX(calc(-50% - 2px)); }
+    }
+
+    .reticle-label.refuse {
+      animation: reticleRefuse 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+      color: #ff8a80;
+      letter-spacing: 0.2rem;
+      text-indent: 0.2rem;
+    }
+
+    /* The dot flinches on the same beat, so the refusal reads as one gesture. */
+    @keyframes dotRefuse {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(227,43,43,0.25), 0 0 12px rgba(227,43,43,0.5); }
+      50%      { box-shadow: 0 0 0 5px rgba(227,43,43,0.42), 0 0 22px rgba(227,43,43,0.8); }
+    }
+
+    #reticle.refuse { animation: dotRefuse 0.5s ease; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .reticle-label.refuse, #reticle.refuse { animation: none; }
+    }
+
+    /* "Go Back" exit under the Enter dot — closes the door and returns home */
+    /* Exit: a cross in a circle, the only thing inside the doorway that isn't a refusal.
+       Lives outside #reticle (see the markup) so it can position against the viewport. */
+    .reticle-back {
+      position: fixed;
+      top: calc(50% + 100px);
+      left: 50%;
+      z-index: 9001;
+      opacity: 0;
+      transform: translateX(-50%);
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      background: rgba(10, 12, 18, 0.35);
+      backdrop-filter: blur(8px) saturate(150%);
+      -webkit-backdrop-filter: blur(8px) saturate(150%);
+      color: rgba(255, 255, 255, 0.65);
+      cursor: pointer;
+      pointer-events: none;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+      transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+    }
+
+    .reticle-back svg {
+      width: 12px;
+      height: 12px;
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+    }
+
+    .reticle-back.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* Portfolio view: sit just under the bottom edge of the framed painting rather
+       than over the middle of it — and above the dock, which occupies roughly
+       45–81px from the bottom. */
+    .reticle-back.art {
+      top: auto;
+      bottom: calc(104px + env(safe-area-inset-bottom));
+    }
+
+    /* The ring and the "Enter" caption are part of the same target as the dot —
+       clicking any of them refuses, so the hit area matches what's on screen
+       instead of just the 10px dot. They bubble to #reticle's click handler. */
+    #reticle.visible .reticle-ring,
+    #reticle.visible .reticle-label {
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    /* Portfolio view: a painting is looked at, not entered. Hide the dot, its
+       ring and the "Enter" caption, leaving only the cross to step back out. */
+    #reticle.art-mode {
+      background: transparent;
+      box-shadow: none;
+    }
+
+    #reticle.art-mode .reticle-ring,
+    #reticle.art-mode .reticle-label {
+      display: none;
+    }
+
+
+    .reticle-back:hover {
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.5);
+      background: rgba(10, 12, 18, 0.55);
+      transform: translateX(-50%) scale(1.08);
+    }
+
+    .reticle-back:active {
+      transform: translateX(-50%) scale(0.94);
+    }
+
+    /* View switch — same glass language as the dock, opposite corner from nothing.
+       Sits below the clock so the two never collide. */
+    #view-toggle {
+      position: fixed;
+      top: calc(74px + env(safe-area-inset-top));
+      right: calc(20px + env(safe-area-inset-right));
+      z-index: 1000;
+      padding: 6px 14px;
+      border-radius: 10px;
+      background: rgba(20, 20, 24, 0.3);
+      backdrop-filter: blur(12px) saturate(160%);
+      -webkit-backdrop-filter: blur(12px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: rgba(255, 255, 255, 0.82);
+      font-family: 'Outfit', sans-serif;
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.16rem;
+      text-transform: uppercase;
+      cursor: pointer;
+      white-space: nowrap;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+                  color 0.2s ease, border-color 0.2s ease;
+    }
+
+    #view-toggle:hover {
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.32);
+    }
+
+    #view-toggle:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    @media (max-width: 480px) {
+      #view-toggle { font-size: 10px; padding: 5px 11px; }
+    }
+
+    /* Subtle cinematic vignette */
+    .vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 20;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.45) 100%);
+      mix-blend-mode: multiply;
+    }
+
+    .door-label {
+      position: absolute;
+      color: white;
+      background: linear-gradient(135deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.3) 100%);
+      padding: 12px 28px;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.25rem;
+      pointer-events: none;
+      transform: translate(-50%, -100%);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1.5px solid rgba(255, 255, 255, 0.2);
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+      box-shadow:
+        0 15px 35px rgba(0, 0, 0, 0.3),
+        0 5px 15px rgba(0, 0, 0, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      z-index: 5;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    }
+
+    .instructions {
+      position: absolute;
+      bottom: calc(96px + env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255, 255, 255, 0.7);
+      text-align: center;
+      pointer-events: none;
+      z-index: 10;
+      opacity: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      animation: fadeInSlide 2.4s cubic-bezier(0.165, 0.84, 0.44, 1) forwards 1.2s;
+      transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .hint-gesture-track {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      height: 22px;
+      opacity: 0.75;
+      color: rgba(255, 255, 255, 0.85);
+    }
+
+    .gesture-drag-anim {
+      display: inline-flex;
+      align-items: center;
+      animation: subtleOscillate 3.2s ease-in-out infinite;
+      filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.4));
+    }
+
+    .gesture-zoom-anim {
+      display: inline-flex;
+      align-items: center;
+      animation: subtlePulseZoom 3.2s ease-in-out infinite 1.6s;
+      filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.4));
+    }
+
+    .hint-pills-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      max-width: 92vw;
+    }
+
+    .hint-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 13px;
+      background: rgba(8, 10, 14, 0.48);
+      border-radius: 20px;
+      backdrop-filter: blur(14px) saturate(160%);
+      -webkit-backdrop-filter: blur(14px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+      text-transform: uppercase;
+      font-size: 10px;
+      font-weight: 400;
+      letter-spacing: 0.12rem;
+      color: rgba(255, 255, 255, 0.8);
+    }
+
+    .hint-pill svg {
+      opacity: 0.75;
+    }
+
+    @keyframes subtleOscillate {
+      0%, 100% {
+        transform: translateX(0);
+        opacity: 0.4;
+      }
+      25% {
+        transform: translateX(-12px);
+        opacity: 0.95;
+      }
+      75% {
+        transform: translateX(12px);
+        opacity: 0.95;
+      }
+    }
+
+    @keyframes subtlePulseZoom {
+      0%, 100% {
+        transform: scale(0.92);
+        opacity: 0.4;
+      }
+      50% {
+        transform: scale(1.15);
+        opacity: 0.95;
+      }
+    }
+
+    /* Top-right live clock (Gurmukhi numerals) */
+    #clock {
+      position: fixed;
+      top: calc(20px + env(safe-area-inset-top));
+      right: calc(20px + env(safe-area-inset-right));
+      z-index: 15;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 3px;
+      pointer-events: none;
+      opacity: 0;
+      animation: fadeInSlide 2s cubic-bezier(0.165, 0.84, 0.44, 1) forwards 0.6s;
+    }
+
+    #clock-time {
+      display: inline-block;
+      box-sizing: border-box;
+      width: 160px;          /* fixed — glyph widths vary as digits change, box must not */
+      white-space: nowrap;   /* never wrap to a 2nd line (that changes box height) */
+      overflow: hidden;      /* hard guarantee: box can never grow past width/height */
+      text-align: center;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 300;
+      letter-spacing: 0.02rem;
+      color: rgba(255, 255, 255, 0.9);
+      padding: 4px 8px;
+      border-radius: 8px;
+      background: rgba(20, 20, 24, 0.28);
+      backdrop-filter: blur(12px) saturate(160%);
+      -webkit-backdrop-filter: blur(12px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+      font-variant-numeric: tabular-nums;
+      pointer-events: auto; /* hover/tap reveals the timezone label below */
+      cursor: default;
+    }
+
+    /* Hidden by default — revealed on hover/tap of the time, auto-hides after 5s (see main.js) */
+    #clock-tz {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.55rem;
+      font-weight: 300;
+      letter-spacing: 0.1rem;
+      color: rgba(255, 255, 255, 0.4);
+      text-transform: uppercase;
+      padding-right: 4px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    #clock.tz-visible #clock-tz {
+      opacity: 1;
+    }
+
+    @media (max-width: 480px) {
+      #clock-time { width: 138px; font-size: 0.65rem; padding: 4px 6px; }
+    }
+
+    .loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 10000;
+      transition: opacity 0.8s ease;
+    }
+
+    .loading.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .minimal-loader {
+      width: 24px;
+      height: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @media (max-width: 768px) {
+      .ui-overlay {
+        top: calc(20px + env(safe-area-inset-top));
+        left: calc(20px + env(safe-area-inset-left));
+      }
+
+      .door-label {
+        font-size: 12px;
+        padding: 8px 16px;
+        letter-spacing: 0.15rem;
+      }
+
+      #painting-popup {
+        top: max(68px, calc(34px + env(safe-area-inset-top)));
+      }
+    }
+
+    /* Focused Painting Title Pill & Details Dropdown */
+    #painting-popup {
+      position: fixed;
+      top: calc(16px + env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9005;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      max-width: calc(100vw - 32px);
+    }
+
+    #painting-popup.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .painting-title-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 16px;
+      border-radius: 4px;
+      background: rgba(8, 10, 14, 0.5);
+      backdrop-filter: blur(12px) saturate(140%);
+      -webkit-backdrop-filter: blur(12px) saturate(140%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.85);
+      font-family: 'Outfit', sans-serif;
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.14rem;
+      text-transform: uppercase;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      transition: all 0.2s ease;
+      max-width: calc(100vw - 40px);
+      text-align: center;
+      line-height: 1.3;
+      user-select: none;
+    }
+
+    .painting-title-pill:hover {
+      background: rgba(14, 18, 24, 0.75);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: #ffffff;
+    }
+
+    .popup-title-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .painting-popup-card {
+      margin-top: 8px;
+      width: calc(100vw - 40px);
+      max-width: 380px;
+      max-height: 50vh;
+      overflow-y: auto;
+      padding: 14px 18px;
+      border-radius: 6px;
+      background: rgba(8, 10, 14, 0.88);
+      backdrop-filter: blur(20px) saturate(160%);
+      -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+      color: #ffffff;
+      display: none;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    #painting-popup.open .painting-popup-card {
+      display: block;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .popup-card-meta {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.06rem;
+      color: rgba(255, 209, 164, 0.9);
+      margin-bottom: 6px;
+    }
+
+    .popup-card-desc {
+      font-size: 12px;
+      font-weight: 300;
+      line-height: 1.6;
+      color: rgba(255, 255, 255, 0.82);
+      white-space: pre-line;
+    }
+
+    .popup-card-desc:empty {
+      display: none;
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;600&display=swap" rel="stylesheet">
+  <style>
+    /* Artist attribution under the wordmark. */
+    #intro-title .intro-artist {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.72rem;
+      letter-spacing: 0.22rem;
+      text-transform: uppercase;
+      color: rgba(236, 231, 222, 0.5);
+      margin-top: 0.9rem;
+    }
+
+    /* Quiet, permanent route to the flat pages. Deliberately not part of the
+       auto-hiding dock: it must survive for crawlers and stay keyboard reachable. */
+    .flat-links {
+      position: fixed;
+      left: max(1.6rem, env(safe-area-inset-left));
+      bottom: max(1.4rem, env(safe-area-inset-bottom));
+      z-index: 40;
+      display: flex;
+      gap: 1.15rem;
+      font-family: 'Outfit', sans-serif;
+    }
+    .flat-links a {
+      font-size: 0.66rem;
+      letter-spacing: 0.17rem;
+      text-transform: uppercase;
+      color: rgba(236, 231, 222, 0.42);
+      text-decoration: none;
+      padding-bottom: 2px;
+      border-bottom: 1px solid transparent;
+      transition: color 0.25s ease, border-color 0.25s ease;
+    }
+    .flat-links a:hover,
+    .flat-links a:focus-visible {
+      color: rgba(236, 231, 222, 0.95);
+      border-bottom-color: #caa565;
+    }
+    @media (max-width: 640px) {
+      .flat-links { gap: 0.9rem; }
+      .flat-links a { font-size: 0.6rem; letter-spacing: 0.13rem; }
+    }
+  </style>
+  <script type="module" crossorigin src="./assets/bundle.js"></script>
+</head>
+
+<body>
+  <div class="loading" id="loading">
+    <div class="minimal-loader"></div>
+  </div>
+  <div id="app"></div>
+
+  <!-- Cinematic vignette framing -->
+  <div class="vignette"></div>
+
+  <!-- Live clock (Gurmukhi numerals, local timezone) -->
+  <div id="clock">
+    <span id="clock-time"></span>
+    <span id="clock-tz"></span>
+  </div>
+
+  <!-- Title wordmark (fades in on load, dismissed on first interaction) -->
+  <div class="ui-overlay" id="intro-title">
+    <h1>Duar</h1>
+    <p>ਦੁਆਰ</p>
+    <p class="intro-artist">Paintings by Vikram Sra</p>
+  </div>
+
+  <!-- The readable half of the site. The 3D gallery lives inside a canvas, so this
+       is the only route in for search engines, screen readers, and anyone who would
+       rather just look at a list. Always in the DOM, never behind the loader. -->
+  <nav class="flat-links" aria-label="Text version">
+    <a href="/work/">View the work as a list</a>
+    <a href="/about/">About</a>
+  </nav>
+
+  <!-- First-visit gesture guidance (fades in on load, dismissed on first interaction) -->
+  <div class="instructions" id="intro-hint">
+    <div class="hint-gesture-track" aria-hidden="true">
+      <span class="gesture-drag-anim" title="Drag to rotate">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8L22 12L18 16M6 8L2 12L6 16M2 12H22"/>
+        </svg>
+      </span>
+      <span class="gesture-zoom-anim" title="Zoom in and out">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/>
+          <path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/>
+        </svg>
+      </span>
+    </div>
+    <div class="hint-pills-row">
+      <span class="hint-pill">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16M14 6l6 6-6 6M10 18l-6-6 6-6"/></svg>
+        Drag ‹ › to rotate
+      </span>
+      <span class="hint-pill">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12h8M12 8v8M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
+        Scroll / Pinch to zoom
+      </span>
+      <span class="hint-pill">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        Tap painting to focus
+      </span>
+    </div>
+  </div>
+
+  <!-- Center reticle: appears on door open -->
+  <div id="reticle">
+    <span class="reticle-title"></span>
+    <span class="reticle-ring"></span>
+    <span class="reticle-label">Enter</span>
+  </div>
+
+  <!-- Exit / Go back cross -->
+  <span class="reticle-back" role="button" aria-label="Go back" title="Go back">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+  </span>
+
+  <!-- Focused Painting Title Pill & Details Dropdown -->
+  <div id="painting-popup">
+    <button class="painting-title-pill" id="painting-title-btn" aria-label="Toggle painting details">
+      <span class="popup-title-text"></span>
+    </button>
+    <div class="painting-popup-card" id="painting-popup-card">
+      <div class="popup-card-meta"></div>
+      <div class="popup-card-desc"></div>
+    </div>
+  </div>
+
+  <script>
+    // Reveal will be controlled by DuarApp in main.js using LoadingManager
+  </script>
+</body>
+
+</html>
