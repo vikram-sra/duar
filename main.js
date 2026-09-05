@@ -20,6 +20,7 @@ import {
 } from './src/portfolio/paintingDoor.js';
 import { createCeramicSculpture } from './src/portfolio/sculpture.js';
 import { createTorontoSkySystem, calculateTorontoSunMoon } from './src/sky/celestial.js';
+import { getAssetUrl } from './src/utils/paths.js';
 
 // Scratch objects reused every frame. animate() runs 60x a second, so anything
 // allocated inside it -- a Color, a Vector3, a clone -- becomes ~1,500 short-lived
@@ -2590,7 +2591,7 @@ class DuarApp {
                 const doorObj = { group, data, hinge, isOpen: false };
                 this.createDoorFrame(group, data);
 
-                loader.load(data.modelPath, (gltf) => {
+                loader.load(getAssetUrl(data.modelPath), (gltf) => {
                     const model = gltf.scene; const panel = model.getObjectByName('Door') || model;
                     model.traverse(o => { if (o.isMesh) { o.material = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.4, metalness: 0.2 }); o.castShadow = true; o.receiveShadow = true; } });
                     // Sink panel slightly into ground for shadow contact

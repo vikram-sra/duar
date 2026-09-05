@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { BASE_RADIUS, RING_SPACING } from './layout.js';
+import { getAssetUrl } from '../utils/paths.js';
 
 // ===========================================================================
 // Ultra-Realistic Botanical Forest & Masterpiece Sacred Rose
@@ -1080,11 +1081,11 @@ export function preloadForestGLBs(onComplete) {
 
     const loader = new GLTFLoader();
     const specs = [
-        { key: 'mango', url: '/models/mango_tree_2.glb', targetHeight: 13.5, groundSink: 0.0 },
-        { key: 'neem', url: '/models/mango_tree.glb', targetHeight: 10.5, groundSink: 0.0 },
-        { key: 'banyan', url: '/models/chinese_banyan_ficus_microcarpa.glb', targetHeight: 12.5, groundSink: 0.0 },
-        { key: 'peepal', url: '/models/bodhi_tree.glb', targetHeight: 11.0, groundSink: 1.25 },
-        { key: 'rose', url: '/models/red_rose.glb', targetHeight: 1.55, groundSink: 0.0 }
+        { key: 'mango', url: getAssetUrl('models/mango_tree_2.glb'), targetHeight: 13.5, groundSink: 0.0 },
+        { key: 'neem', url: getAssetUrl('models/mango_tree.glb'), targetHeight: 10.5, groundSink: 0.0 },
+        { key: 'banyan', url: getAssetUrl('models/chinese_banyan_ficus_microcarpa.glb'), targetHeight: 12.5, groundSink: 0.0 },
+        { key: 'peepal', url: getAssetUrl('models/bodhi_tree.glb'), targetHeight: 11.0, groundSink: 1.25 },
+        { key: 'rose', url: getAssetUrl('models/red_rose.glb'), targetHeight: 1.55, groundSink: 0.0 }
     ];
 
     const promises = specs.map(spec => new Promise((resolve) => {

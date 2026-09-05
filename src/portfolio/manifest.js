@@ -2,12 +2,14 @@
 // It carries each painting's true pixel dimensions, which is what lets the
 // gallery lay itself out at the correct widths before any image downloads.
 
+import { getAssetUrl } from '../utils/paths.js';
+
 let cached = null;
 
 export async function loadManifest() {
     if (cached) return cached;
     try {
-        const res = await fetch('/portfolio/manifest.json', { cache: 'no-cache' });
+        const res = await fetch(getAssetUrl('portfolio/manifest.json'), { cache: 'no-cache' });
         if (!res.ok) throw new Error(`manifest.json ${res.status}`);
         const data = await res.json();
 

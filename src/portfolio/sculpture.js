@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { frameMaterial } from './paintingDoor.js';
+import { getAssetUrl } from '../utils/paths.js';
 
 // Ceramic centerpiece sculpture for the portfolio gallery view.
 // Loads the 1:1 photogrammetry / LiDAR iPhone 3D scan from '/models/center_sculpture.glb',
@@ -88,7 +89,7 @@ export function createCeramicSculpture(loadingManager) {
     // Load the scanned .glb model
     const loader = new GLTFLoader(loadingManager);
     loader.load(
-        '/models/center_sculpture.glb',
+        getAssetUrl('models/center_sculpture.glb'),
         (gltf) => {
             const model = gltf.scene;
             model.name = 'SculptureScannedModel';

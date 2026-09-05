@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getAssetUrl } from '../utils/paths.js';
 
 // A painting rendered in the door format: same frame, same shadows — but sized to
 // the real canvas. A 16in study and a 48in painting differ in the world exactly as
@@ -277,7 +278,8 @@ export function checkWebPSupport() {
 // reused when a work is re-shot, so without this a visitor holding a year-long
 // cached copy would never see the new version.
 function assetUrl(path, version) {
-    return version ? `/portfolio/${path}?v=${version}` : `/portfolio/${path}`;
+    const fullPath = version ? `portfolio/${path}?v=${version}` : `portfolio/${path}`;
+    return getAssetUrl(fullPath);
 }
 
 // Every door currently holding a texture above THUMB, newest use last.

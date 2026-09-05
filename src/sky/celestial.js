@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getAssetUrl } from '../utils/paths.js';
 
 // Toronto, Ontario, Canada geographic coordinates
 export const TORONTO_LAT = 43.6532 * (Math.PI / 180); // 43.6532° N
@@ -140,7 +141,7 @@ export function createTorontoSkySystem(radius = 1800, isMobile = false) {
     celestialGroup.name = "TorontoCelestialGroup";
 
     const textureLoader = new THREE.TextureLoader();
-    const esoMwTexture = textureLoader.load('/textures/milkyway.jpg');
+    const esoMwTexture = textureLoader.load(getAssetUrl('textures/milkyway.jpg'));
     esoMwTexture.wrapS = THREE.RepeatWrapping;
     esoMwTexture.wrapT = THREE.ClampToEdgeWrapping;
     esoMwTexture.minFilter = THREE.LinearFilter;
