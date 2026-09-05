@@ -1,0 +1,43 @@
+# Jekyll GitHub Pages Configuration
+title: Duar
+description: Ultra-Realistic Botanical Forest & 3D Gallery
+baseurl: ""
+url: "https://duar.one"
+
+# Markdown and Theme settings
+markdown: kramdown
+theme: jekyll-theme-primer
+
+# Plugins supported by GitHub Pages
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# Files to explicitly include
+include:
+  - models
+  - assets
+  - dist
+
+# Files and directories to exclude from Jekyll processing
+exclude:
+  - 3d assets/
+  - scripts/
+  - portfolio/
+  - node_modules/
+  - vendor/
+  - Gemfile
+  - Gemfile.lock
+  - package.json
+  - package-lock.json
+  - vite.config.js
+  - netlify.toml
+  - README.md
+  - door_animation.md
+
+# Keep generated files across builds
+keep_files:
+  - dist
+  - models
+  - assets
