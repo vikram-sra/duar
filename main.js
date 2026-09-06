@@ -465,13 +465,63 @@ class DuarApp {
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (window.innerWidth < 768);
         this.isMobile = isMobile;
 
+        // A second, stricter tier for genuinely small/low-memory phones, not
+        // every tablet or mid-range phone that also matches isMobile. UA
+        // sniffing alone can't tell a current flagship from a 2019 budget
+        // phone; combining a narrow viewport with deviceMemory (Chrome/Android
+        // only, undefined on iOS — treated as "unknown, assume capable" rather
+        // than false, since a false positive here only costs conservatism, a
+        // false negative on real hardware costs a crash) catches most of the
+        // devices actually at risk without needing a device database.
+        const isSmallPhone = isMobile && (
+            window.innerWidth <= 390 ||
+            (navigator.deviceMemory !== undefined && navigator.deviceMemory <= 4)
+        );
+        this.isSmallPhone = isSmallPhone;
+
+        // One tier object, derived once. Scattered `isMobile` checks drift out
+        // of agreement as a scene grows; this is the single place cost scales
+        // with device class. Scale what dominates cost (geometry, shadow
+        // resolution, pixel fill) rather than hiding content — the same grove
+        // with fewer trees is fine, a different grove is a maintenance burden.
+        this.quality = {
+            pixelRatioCap: isSmallPhone ? 1.0 : (isMobile ? 1.5 : 2.0),
+            shadowMapSize: isSmallPhone ? 512 : (isMobile ? 1024 : 3072),
+            treeCountScale: isSmallPhone ? 0.5 : 1.0,
+            secondaryShadowLights: !isSmallPhone, // e.g. the rose's dedicated caster
+        };
+
         this.renderer = new THREE.WebGLRenderer({
             antialias: !isMobile, // Hardware MSAA on mobile postprocessing causes heavy bandwidth & heat
             powerPreference: "high-performance",
             alpha: false
         });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality.pixelRatioCap));
+
+        // Without this, a lost context reads as a crash: the canvas goes
+        // permanently black with nothing telling the visitor why. Mobile Safari
+        // discards a WebGL context under memory pressure well before the tab
+        // itself is killed, and a scene this size (8M+ triangles, several
+        // hundred MB of texture and shadow-map residency once every species is
+        // loaded) is exactly the kind that trips it on a small phone.
+        //
+        // Full in-place reconstruction (rebuilding every geometry, material,
+        // and texture from scratch on 'webglcontextrestored') is a large,
+        // fragile surface for a scene this size to get right, and a wrong
+        // partial rebuild is worse than a clear reload. A reload is cheap here:
+        // the service worker's shell cache serves the HTML/JS instantly, and
+        // heavy assets are cached under their own versioned entries (see
+        // sw.js), so restart cost is a fraction of the original load.
+        this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault(); // required, or 'webglcontextrestored' never fires
+            if (this._rafId) cancelAnimationFrame(this._rafId);
+            console.warn('WebGL context lost — pausing render loop.');
+        });
+        this.renderer.domElement.addEventListener('webglcontextrestored', () => {
+            window.location.reload();
+        });
+
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         // Slightly hotter than neutral so the midtones survive the reduced fill
         // below. ACES rolls the highlights off, so this buys contrast rather than
@@ -2000,7 +2050,7 @@ class DuarApp {
         // than a leaf, so leaf-on-leaf shadows could not resolve at all. The
         // shadow map is cached rather than redrawn per frame, so a larger one
         // costs memory and an occasional rebuild rather than frame time.
-        const shadowRes = this.isMobile ? 1024 : 3072;
+        const shadowRes = this.quality.shadowMapSize;
 
         this.sunDist = 1600;
         this.sunLight = new THREE.DirectionalLight(0xfff2c8, 3.3); // Warm solar light
@@ -2928,7 +2978,7 @@ class DuarApp {
             }
         };
 
-        layoutForest().forEach(({ species, x, z, angle, seed, scale }) => {
+        layoutForest(this.quality.treeCountScale).forEach(({ species, x, z, angle, seed, scale }) => {
             const group = createTree(species, { seed, scale });
             const groundY = getForestElevation(x, z);
             group.position.set(x, groundY, z);
@@ -3443,7 +3493,7 @@ class DuarApp {
         // A single red rose stands in for the cone/sculpture in forest mode --
         // built once and toggled visible like the other two, not rebuilt per
         // view switch.
-        this.roseCenterpiece = createRoseCenterpiece();
+        this.roseCenterpiece = createRoseCenterpiece(4242, { dedicatedShadowLight: this.quality.secondaryShadowLights });
         this.roseCenterpiece.visible = false;
         this.scene.add(this.roseCenterpiece);
         this.roseDoor = {
@@ -3510,7 +3560,7 @@ class DuarApp {
     }
 
     animate() {
-        requestAnimationFrame(() => this.animate());
+        this._rafId = requestAnimationFrame(() => this.animate());
         this.time += 0.001;
 
         // Real, frame-rate-independent delta time (clamped so a backgrounded tab can't jump the sky).

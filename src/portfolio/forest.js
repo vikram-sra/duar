@@ -1902,7 +1902,7 @@ function createPhotorealisticRoseBloom(rand) {
 // 8. 3D Rose Centerpiece (red_rose_1k.glb)
 // ---------------------------------------------------------------------------
 
-export function createRoseCenterpiece(seed = 4242) {
+export function createRoseCenterpiece(seed = 4242, { dedicatedShadowLight = true } = {}) {
     const rand = mulberry32(seed);
     const group = new THREE.Group();
     group.name = 'RoseCenterpiece';
@@ -1980,26 +1980,37 @@ export function createRoseCenterpiece(seed = 4242) {
     rosePivot.position.set(0, 0, 0);
     group.add(rosePivot);
 
-    // Dedicated high-precision shadow caster for the rose plant:
-    // Resolves millimeter-fine shadow silhouettes of rose petals, leaves, and thorny branches onto the soil
-    const roseShadowLight = new THREE.DirectionalLight(0xfff2c8, 1.8);
-    roseShadowLight.name = 'RoseCenterpieceShadowLight';
-    roseShadowLight.castShadow = true;
-    roseShadowLight.shadow.mapSize.set(1024, 1024);
-    roseShadowLight.shadow.camera.near = 0.5;
-    roseShadowLight.shadow.camera.far = 28.0;
-    const shadowBound = 1.7; // 3.4m x 3.4m tight frustum covering the 1.65m rose bush
-    roseShadowLight.shadow.camera.left = -shadowBound;
-    roseShadowLight.shadow.camera.right = shadowBound;
-    roseShadowLight.shadow.camera.top = shadowBound;
-    roseShadowLight.shadow.camera.bottom = -shadowBound;
-    roseShadowLight.shadow.camera.updateProjectionMatrix();
-    roseShadowLight.shadow.bias = -0.0003;
-    roseShadowLight.shadow.normalBias = 0.003;
-    roseShadowLight.shadow.radius = 1.2;
-    roseShadowLight.position.set(6, 12, 6);
-    roseShadowLight.target = rosePivot;
-    group.add(roseShadowLight);
+    // Dedicated high-precision shadow caster for the rose plant: resolves
+    // millimeter-fine shadow silhouettes of rose petals, leaves, and thorny
+    // branches onto the soil. This is a THIRD shadow-casting light in the
+    // scene alongside the sun and moon -- a full extra depth pass over every
+    // shadow-casting object every time the shared shadow map is invalidated,
+    // for a light that only ever illuminates a 3.4m x 3.4m box. Skipped on the
+    // small-phone tier: the rose still gets a real shadow from whichever of
+    // sun/moon is dominant, just softer and less precisely placed, which is a
+    // reasonable trade against a whole additional render pass on a device
+    // already close to its memory ceiling.
+    let roseShadowLight = null;
+    if (dedicatedShadowLight) {
+        roseShadowLight = new THREE.DirectionalLight(0xfff2c8, 1.8);
+        roseShadowLight.name = 'RoseCenterpieceShadowLight';
+        roseShadowLight.castShadow = true;
+        roseShadowLight.shadow.mapSize.set(1024, 1024);
+        roseShadowLight.shadow.camera.near = 0.5;
+        roseShadowLight.shadow.camera.far = 28.0;
+        const shadowBound = 1.7; // 3.4m x 3.4m tight frustum covering the 1.65m rose bush
+        roseShadowLight.shadow.camera.left = -shadowBound;
+        roseShadowLight.shadow.camera.right = shadowBound;
+        roseShadowLight.shadow.camera.top = shadowBound;
+        roseShadowLight.shadow.camera.bottom = -shadowBound;
+        roseShadowLight.shadow.camera.updateProjectionMatrix();
+        roseShadowLight.shadow.bias = -0.0003;
+        roseShadowLight.shadow.normalBias = 0.003;
+        roseShadowLight.shadow.radius = 1.2;
+        roseShadowLight.position.set(6, 12, 6);
+        roseShadowLight.target = rosePivot;
+        group.add(roseShadowLight);
+    }
     group.userData.shadowLight = roseShadowLight;
 
     const enableShadows = (inst) => {
@@ -2098,7 +2109,7 @@ export function createRoseCenterpiece(seed = 4242) {
 // 44 trees distributed organically like a true Punjabi baag orchard:
 // Authentic Indian baag (orchard grove) layout: denser distribution (50 trees, 68m perimeter)
 // with strictly guaranteed zero canopy intersection and natural root flare preservation.
-export function layoutForest() {
+export function layoutForest(treeScale = 1.0) {
     const rand = mulberry32(80);
 
     const baseRadii = {
@@ -2139,11 +2150,17 @@ export function layoutForest() {
         rReq: baseRadii.banyan * b2Scale
     });
 
-    // 50 trees total: 2 grand banyans, 10 sacred peepals, 21 lush mangoes, 17 cooling neems
+    // 50 trees total at treeScale 1.0: 2 grand banyans, 10 sacred peepals, 21
+    // lush mangoes, 17 cooling neems. treeScale thins the grove for low-tier
+    // devices -- same species mix, same layout algorithm, just fewer of each,
+    // so a small phone gets a sparser version of the same baag rather than a
+    // different one. The 2 banyans above are left unscaled: two large trees
+    // cost little next to fifty, and losing them changes the grove's character
+    // more than its cost.
     const toPlace = [];
-    for (let i = 0; i < 10; i++) toPlace.push('peepal');
-    for (let i = 0; i < 21; i++) toPlace.push('mango');
-    for (let i = 0; i < 17; i++) toPlace.push('neem');
+    for (let i = 0; i < Math.round(10 * treeScale); i++) toPlace.push('peepal');
+    for (let i = 0; i < Math.round(21 * treeScale); i++) toPlace.push('mango');
+    for (let i = 0; i < Math.round(17 * treeScale); i++) toPlace.push('neem');
 
     // Shuffle so diverse species naturally interleave across the grove
     for (let i = toPlace.length - 1; i > 0; i--) {
