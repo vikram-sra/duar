@@ -3671,6 +3671,13 @@ if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register(getAssetUrl('sw.js')).then(registration => {
                 console.log('SW registered:', registration);
 
+                // A worker installed on a previous visit can already be waiting,
+                // and onupdatefound never fires for it. Without this nudge the
+                // visitor keeps the old build until every tab is closed.
+                if (registration.waiting) {
+                    registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                }
+
             // Check for updates every minute (optional but good for long sessions)
             setInterval(() => {
                 registration.update();
@@ -3701,12 +3708,16 @@ if ('serviceWorker' in navigator) {
             console.log('SW registration failed:', registrationError);
         });
 
-        // Ensure reload when new SW takes control
-        let refreshing;
+        // Reload when a NEW worker takes control, so the tab picks up the
+        // deploy without a manual refresh. The first-ever worker also takes
+        // control (via clients.claim), and reloading for that one would bounce
+        // the page on a first visit — hence the hadController check.
+        const hadController = Boolean(navigator.serviceWorker.controller);
+        let refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
-            if (refreshing) return;
-            window.location.reload();
+            if (refreshing || !hadController) return;
             refreshing = true;
+            window.location.reload();
         });
     });
 } else {

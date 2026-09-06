@@ -859,11 +859,11 @@
   </div>
 
   <script type="module">
-    if (window.location.port === '5173' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      import('./main.js');
-    } else {
-      import('./assets/bundle.js');
-    }
+    // One entry, both environments. Vite serves ./main.js from source in dev and
+    // rewrites this specifier to the content-hashed chunk at build time. Do NOT
+    // point the production branch at the built bundle by name: Vite follows that
+    // specifier too, re-enters the same module, and emits duplicate ~850 KB chunks.
+    import('./main.js');
   </script>
   <script>
     // Reveal will be controlled by DuarApp in main.js using LoadingManager
