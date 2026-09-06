@@ -88,6 +88,7 @@ export function createTorontoSkySystem(radius = 1800, isMobile = false) {
         uniforms: {
             uZenithColor: { value: new THREE.Color(0x1a4674) },
             uHorizonColor: { value: new THREE.Color(0x4c78a6) },
+            uHorizonOpposite: { value: new THREE.Color(0x4c78a6) },
             uSunDir: { value: new THREE.Vector3(0, 1, 0) },
             uSunColor: { value: new THREE.Color(0xfff5d8) },
             uNightFactor: { value: 0.0 }
@@ -102,6 +103,7 @@ export function createTorontoSkySystem(radius = 1800, isMobile = false) {
         fragmentShader: `
             uniform vec3 uZenithColor;
             uniform vec3 uHorizonColor;
+            uniform vec3 uHorizonOpposite;
             uniform vec3 uSunDir;
             uniform vec3 uSunColor;
             uniform float uNightFactor;
@@ -111,13 +113,34 @@ export function createTorontoSkySystem(radius = 1800, isMobile = false) {
                 vec3 dir = normalize(vWorldPos);
                 float h = max(0.0, dir.y);
 
-                float horizonBand = pow(1.0 - h, 3.5) * 0.22;
-                vec3 baseSky = mix(uZenithColor, uHorizonColor, horizonBand);
+                float horizonBand = pow(1.0 - h, 2.8);
+
+                // A sunset is not orange all the way round. The warm band sits in
+                // the sun's quarter of the sky and falls off to a cool, dusty
+                // counter-glow behind the viewer -- ringing the whole horizon in
+                // the same orange is the single thing that makes a procedural sky
+                // read as fake. Compare compass bearings only, so the split holds
+                // however high the sun is.
+                vec2 dirAz = normalize(vec2(dir.x, dir.z) + vec2(1e-6));
+                vec2 sunAz = normalize(vec2(uSunDir.x, uSunDir.z) + vec2(1e-6));
+                float towardSun = smoothstep(-0.55, 0.95, dot(dirAz, sunAz));
+                vec3 horizonMix = mix(uHorizonOpposite, uHorizonColor, towardSun);
+
+                vec3 baseSky = mix(uZenithColor, horizonMix, horizonBand);
 
                 float sunDot = max(0.0, dot(dir, uSunDir));
-                float corona = pow(sunDot, 256.0) * 0.35 * (1.0 - uNightFactor);
+                // Two terms, not one: a wide Mie-ish scatter that swells around a
+                // low sun and gives the sunset its body, and a tight corona for
+                // the disc itself. The tight term alone reads as a sticker on a
+                // flat gradient.
+                float scatter = pow(sunDot, 5.0) * 0.30 * (1.0 - uNightFactor);
+                float corona  = pow(sunDot, 256.0) * 0.35 * (1.0 - uNightFactor);
 
-                vec3 col = baseSky + uSunColor * corona;
+                // Scatter concentrates near the horizon, where the light path
+                // through atmosphere is longest.
+                scatter *= mix(0.35, 1.0, horizonBand);
+
+                vec3 col = baseSky + uSunColor * (corona + scatter);
 
                 // Deep royal midnight sky with subtle atmospheric horizon airglow
                 vec3 nightZenith = vec3(0.008, 0.015, 0.035);

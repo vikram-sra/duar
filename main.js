@@ -11,7 +11,8 @@ import { loadManifest } from './src/portfolio/manifest.js';
 import { layoutPaintings, byYearNewestFirst, RING_SPACING } from './src/portfolio/layout.js';
 import {
     createTree, layoutForest, createForestFloor, createRoseCenterpiece, sharedForestGeometries,
-    getForestGroundTexture, updateForestWind, forestWindUniforms, forestGroundUniforms, getForestElevation
+    getForestGroundTexture, updateForestWind, updateForestLighting,
+    forestWindUniforms, forestGroundUniforms, getForestElevation
 } from './src/portfolio/forest.js';
 import {
     createPaintingDoor, loadPaintingThumbnail, requestTier, releasePaintingTextures,
@@ -49,15 +50,27 @@ const C_DUSK_ZENITH = new THREE.Color(0x1c182c);
 const C_DUSK_HORIZON = new THREE.Color(0xc8501f);
 const _twiZenith = new THREE.Color();
 const _twiHorizon = new THREE.Color();
+// The horizon opposite the sun. At dusk this is the cool dusty band that sits
+// behind the viewer while the west burns -- without it the sky is uniformly
+// orange all the way round, which is the tell of a procedural sunset.
+const C_DAY_HORIZON_OPP = new THREE.Color(0x5580ab);
+const C_DAWN_HORIZON_OPP = new THREE.Color(0x4a4a72);
+const C_DUSK_HORIZON_OPP = new THREE.Color(0x3d3a60);
+const _twiHorizonOpp = new THREE.Color();
+const _horizOppScratch = new THREE.Color();
+
 const C_NIGHT_ZENITH = new THREE.Color(0x000000);
 const C_NIGHT_HORIZON = new THREE.Color(0x000000);
+const C_FOREST_FOG_DAY = new THREE.Color(0xa2c49c);
+const C_FOREST_FOG_NIGHT = new THREE.Color(0x0e1b12);
+const _forestFogScratch = new THREE.Color();
 
 // Sun / moon disc and light tints across rise and set.
 const C_SUN_HIGH = new THREE.Color(0xfffde8);
-const C_SUN_LOW = new THREE.Color(0xf8b066);
+const C_SUN_LOW = new THREE.Color(0xff8a34);          // deep sunset disc
 const C_SUNLIGHT_HIGH = new THREE.Color(0xfff2c8);
-const C_SUNLIGHT_LOW = new THREE.Color(0xf4a75e);     // low evening sun
-const C_SUNLIGHT_DAWN = new THREE.Color(0xf0b09a);    // low morning sun, cooler and pinker
+const C_SUNLIGHT_LOW = new THREE.Color(0xe8722a);     // low evening sun, properly hot
+const C_SUNLIGHT_DAWN = new THREE.Color(0xea9a80);    // low morning sun, cooler and pinker
 const C_MOON_HIGH = new THREE.Color(0xe6edf5);
 const C_MOON_LOW = new THREE.Color(0xc2d2e2);
 const C_MOONLIGHT_HIGH = new THREE.Color(0xc8d8e8);
@@ -69,8 +82,8 @@ const C_HEMI_NIGHT = new THREE.Color(0x35455d);
 const C_HEMI_DAY = new THREE.Color(0xfcf2d4);
 const C_HEMI_GROUND_NIGHT = new THREE.Color(0x10151f);
 const C_HEMI_GROUND_DAY = new THREE.Color(0x241f18);
-const C_HEMI_FOREST_GROUND_NIGHT = new THREE.Color(0x0a1209);
-const C_HEMI_FOREST_GROUND_DAY = new THREE.Color(0x233118);
+const C_HEMI_FOREST_GROUND_NIGHT = new THREE.Color(0x081008);
+const C_HEMI_FOREST_GROUND_DAY = new THREE.Color(0x182814);
 
 // Floor across the 24-hour cycle.
 const C_FLOOR_NOON = new THREE.Color(0x68645e);
@@ -78,21 +91,34 @@ const C_FLOOR_TWILIGHT = new THREE.Color(0x202834);
 const C_FLOOR_MIDNIGHT = new THREE.Color(0x0a1424);
 const C_FLOOR_DAWN = new THREE.Color(0x323034);
 
-// The forest floor stays in a mossy green-brown register instead of shifting
-// to the gallery's navy midnight -- a stage floor and a forest floor going
-// dark should look like different kinds of dark, not the same ramp retinted.
-// Brighter than they look: in forest mode these multiply against the litter
-// texture (average luminance ~140), so the value that actually lands on screen
-// is roughly half of what is written here. Tuned at the product, not on paper.
-const C_FLOOR_FOREST_NOON = new THREE.Color(0x8c9e6e);
-const C_FLOOR_FOREST_TWILIGHT = new THREE.Color(0x4e6640);
-const C_FLOOR_FOREST_MIDNIGHT = new THREE.Color(0x1e2c1a);
-const C_FLOOR_FOREST_DAWN = new THREE.Color(0x8a8160);
+// Plain deep organic meadow moss floor color across the day/night cycle
+const C_FLOOR_FOREST_NOON = new THREE.Color(0x1e3a16);
+const C_FLOOR_FOREST_TWILIGHT = new THREE.Color(0x142610);
+const C_FLOOR_FOREST_MIDNIGHT = new THREE.Color(0x0a1408);
+const C_FLOOR_FOREST_DAWN = new THREE.Color(0x24421a);
 
 // Floor ring ribbon. Door mode and paintings mode are the same geometry at different wave
 // amplitudes, which lets switchView morph between them instead of swapping buffers.
 // The resting speed of the sky: slow enough to read as atmosphere, not animation.
 const AMBIENT_DAY_SPEED = 0.025;
+
+// Reused each frame for the forest's key-light direction; allocating a vector
+// per frame here is exactly the GC pressure the render loop cannot afford.
+const _keyLightDir = new THREE.Vector3();
+
+// Ambient orbit speed per view. Forest is slower: the camera sits inside a grove
+// rather than outside a ring of objects, so the same angular rate reads as much
+// faster against nearby trunks.
+const ROTATE_SPEED_FOR = { default: -0.8, portfolio: -0.8, forest: -0.28 };
+
+// Which object sits at the centre of each view. Used by both the click router
+// and switchView's show/hide, so the thing you click to change worlds and the
+// thing that gets swapped in cannot drift apart.
+const CENTREPIECE_FOR = (app) => ({
+    default: app.rock,
+    portfolio: app.sculpture,
+    forest: app.roseCenterpiece,
+});
 
 // The three views, in the order the centre object cycles through on click. A
 // mode string's position in this array is its whole identity for cycling
@@ -271,13 +297,13 @@ class DuarApp {
     _showReticle() {
         const reticle = document.getElementById('reticle');
         if (!reticle) return;
-        // In portfolio view the dot, ring and "Enter" caption are hidden — a
-        // painting is looked at, not entered — leaving only the cross to exit.
-        const art = this.viewMode === 'portfolio';
+        // In portfolio view and forest view, the dot, ring and "Enter" caption are hidden —
+        // a work or botanical specimen is inspected, leaving only the cross to exit.
+        const art = this.viewMode === 'portfolio' || this.viewMode === 'forest';
         reticle.classList.toggle('art-mode', art);
         if (art) {
             // The title element keeps whatever door was last opened in the default
-            // view; without clearing it, a stale "duar-੯" floats over the painting.
+            // view; without clearing it, a stale "duar-੯" floats over the scene.
             const titleEl = reticle.querySelector('.reticle-title');
             if (titleEl) titleEl.textContent = '';
         }
@@ -294,24 +320,30 @@ class DuarApp {
         );
 
         // Show persistent title pill at the top in focus mode
-        if (art && this.activeDoor?.data) {
-            const p = this.activeDoor.data;
+        if (art && this.activeDoor) {
             const popup = document.getElementById('painting-popup');
             const titleSpan = popup?.querySelector('.popup-title-text');
             const metaDiv = popup?.querySelector('.popup-card-meta');
             const descDiv = popup?.querySelector('.popup-card-desc');
 
             if (popup && titleSpan) {
-                titleSpan.textContent = p.title || 'Untitled';
+                if (this.activeDoor.data) {
+                    const p = this.activeDoor.data;
+                    titleSpan.textContent = p.title || 'Untitled';
 
-                // Verbatim dimensions, year and medium provided
-                const metaParts = [];
-                if (p.year) metaParts.push(`${p.year}`);
-                if (p.widthIn && p.heightIn) metaParts.push(`${p.widthIn}×${p.heightIn} in`);
-                if (p.medium) metaParts.push(p.medium);
+                    // Verbatim dimensions, year and medium provided
+                    const metaParts = [];
+                    if (p.year) metaParts.push(`${p.year}`);
+                    if (p.widthIn && p.heightIn) metaParts.push(`${p.widthIn}×${p.heightIn} in`);
+                    if (p.medium) metaParts.push(p.medium);
 
-                if (metaDiv) metaDiv.textContent = metaParts.join('  ·  ');
-                if (descDiv) descDiv.textContent = p.description || '';
+                    if (metaDiv) metaDiv.textContent = metaParts.join('  ·  ');
+                    if (descDiv) descDiv.textContent = p.description || '';
+                } else if (this.activeDoor.isTree || this.activeDoor.isRose || this.activeDoor.isFlora) {
+                    titleSpan.textContent = this.activeDoor.title || this.activeDoor.name || 'Botanical Flora';
+                    if (metaDiv) metaDiv.textContent = this.activeDoor.meta || '';
+                    if (descDiv) descDiv.textContent = this.activeDoor.description || '';
+                }
 
                 popup.classList.remove('open');
                 popup.classList.add('visible');
@@ -423,12 +455,17 @@ class DuarApp {
             alpha: false
         });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        this.renderer.toneMappingExposure = 1.02; // Clean, natural exposure
+        // Slightly hotter than neutral so the midtones survive the reduced fill
+        // below. ACES rolls the highlights off, so this buys contrast rather than
+        // clipping.
+        this.renderer.toneMappingExposure = 1.08;
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Ultra-realistic soft contact shadows
+        this.renderer.shadowMap.type = THREE.PCFShadowMap; // Ultra-realistic contact shadows
+        this.renderer.shadowMap.autoUpdate = false;
+        this.renderer.shadowMap.needsUpdate = true;
         this.container.appendChild(this.renderer.domElement);
 
         this.renderer.setClearColor(0x000000, 1); // Stay black initially
@@ -1067,14 +1104,22 @@ class DuarApp {
         );
     }
 
+    // One meaning in every view: paused freezes all ambient motion (the sky
+    // clock, the ground rings, the camera's orbit); playing resumes all of it.
+    //
+    // Forest mode used to force autoRotate off here whatever the button said, so
+    // pressing play there did nothing visible and the icon claimed a state the
+    // scene was not in. Not auto-rotating is a reasonable *default* on entering
+    // forest, but it cannot be an override, or the control is lying.
+    //
+    // `rotation: false` still exists for the time buttons: winding the day
+    // forward should move the sun without also setting the world spinning.
     setMotionPaused(paused, { rotation = true } = {}) {
         this.motionPaused = !!paused;
         if (rotation) {
-            if (this.viewMode === 'forest') {
-                this.controls.autoRotate = false;
-            } else {
-                this.controls.autoRotate = !this.motionPaused;
-                if (!this.motionPaused) this.controls.autoRotateSpeed = -0.8;   // gentle CW
+            this.controls.autoRotate = !this.motionPaused;
+            if (!this.motionPaused) {
+                this.controls.autoRotateSpeed = ROTATE_SPEED_FOR[this.viewMode] ?? -0.8;
             }
         }
 
@@ -1201,17 +1246,23 @@ class DuarApp {
             let interactedWithObject = false;
 
             if (hits.length > 0) {
+                // Whichever object stands at the centre of the current view: the
+                // cone, the sculpture, or the rose. Clicking the centre means
+                // "change worlds" in every view. The rose used to be excluded here
+                // and routed to a focus instead, so the same gesture did two
+                // different things depending on which world you were standing in.
                 const isCenterObj = (obj) => {
-                    if (obj === this.rock) return true;
+                    const centre = CENTREPIECE_FOR(this)[this.viewMode];
+                    if (!centre) return false;
                     let p = obj;
                     while (p) {
-                        if (p === this.sculpture) return true;
+                        if (p === centre) return true;
                         p = p.parent;
                     }
                     return false;
                 };
 
-                // Find if we hit any center monolith/sculpture or door-related object
+                // Find if we hit the centrepiece or a door-related object
                 const hit = hits.find(h => {
                     if (isCenterObj(h.object)) return true;
                     let obj = h.object;
@@ -1225,11 +1276,14 @@ class DuarApp {
                 if (hit) {
                     interactedWithObject = true;
                     if (isCenterObj(hit.object)) {
-                        this.setMotionPaused(true);
-                        // Cycles doors -> paintings -> forest -> doors. switchView()
-                        // repaints the dock and top-right buttons itself once
-                        // this.viewMode changes, so there's nothing left to sync here.
-                        if (!this._switching) this.switchView(nextViewMode(this.viewMode));
+                        // Cycles doors -> paintings -> forest -> doors, from wherever
+                        // the visitor is standing. Motion is deliberately left alone:
+                        // this used to force a pause on every switch, so the play
+                        // button had to be pressed again after each one.
+                        // switchView() repaints the dock and top-right buttons itself.
+                        if (!this._switching) {
+                            this.switchView(nextViewMode(this.viewMode), { keepCamera: true });
+                        }
                         return;
                     }
 
@@ -1244,7 +1298,14 @@ class DuarApp {
 
                     if (door) {
                         if (door.isTree) {
-                            // Decorative -- no portal, no hinge, nothing to open.
+                            if (!door.isGrass && !door.isShrub) {
+                                if (this.activeDoor === door && !this.isTraveling) {
+                                    const popup = document.getElementById('painting-popup');
+                                    if (popup) popup.classList.toggle('open');
+                                } else {
+                                    this.focusFlora(door);
+                                }
+                            }
                         } else if (door.isPainting) {
                             if (this.activeDoor === door && !this.isTraveling) {
                                 const popup = document.getElementById('painting-popup');
@@ -1264,11 +1325,13 @@ class DuarApp {
                 }
             }
 
-            // Tapping anywhere else dismisses open popup or toggles UI
+            // Tapping anywhere else dismisses open popup or exits active focus or toggles UI
             if (!interactedWithObject) {
                 const popup = document.getElementById('painting-popup');
                 if (popup && popup.classList.contains('open')) {
                     popup.classList.remove('open');
+                } else if (this.activeDoor && (this.activeDoor.isTree || this.activeDoor.isRose || this.activeDoor.isFlora || this.activeDoor.isPainting)) {
+                    this.resetScene();
                 } else {
                     this.setUIVisibility(!this.uiVisible);
                 }
@@ -1460,6 +1523,36 @@ class DuarApp {
     _rebuildHoverTargets() {
         this._hoverTargets = [];
         this._hoverOwner = new Map();
+        if (this.viewMode === 'forest') {
+            for (const d of this.doors) {
+                if (d.isTree && !d.isGrass && !d.isShrub && d.group) {
+                    d.group.traverse(o => {
+                        if (o.isMesh) {
+                            this._hoverTargets.push(o);
+                            this._hoverOwner.set(o, d);
+                        }
+                    });
+                }
+            }
+            if (this.roseCenterpiece) {
+                const targetRose = this.roseDoor || {
+                    group: this.roseCenterpiece,
+                    isRose: true,
+                    isFlora: true,
+                    title: 'Duar 3.0',
+                    name: 'Duar 3.0',
+                    meta: 'Rosa damascena · Living Centerpiece',
+                    description: 'A flourishing velvety ruby rose resting peacefully at the sanctuary center.'
+                };
+                this.roseCenterpiece.traverse(o => {
+                    if (o.isMesh && o.name !== 'ContactShadow') {
+                        this._hoverTargets.push(o);
+                        this._hoverOwner.set(o, targetRose);
+                    }
+                });
+            }
+            return;
+        }
         for (const d of this.doors) {
             const hit = d.portalHitbox;
             if (!hit) continue;
@@ -1684,8 +1777,15 @@ class DuarApp {
 
     resetScene(toHome = false) {
         const lastActivePainting = (!toHome && this.viewMode === 'portfolio' && this.activeDoor?.isPainting) ? this.activeDoor : null;
+        const lastActiveFlora = (!toHome && this.viewMode === 'forest' && (this.activeDoor?.isTree || this.activeDoor?.isRose || this.activeDoor?.isFlora)) ? this.activeDoor : null;
 
         this.closeAllDoors();
+
+        // Restore all hidden trees on exiting full view
+        if (this._occludedTrees && this._occludedTrees.size > 0) {
+            this._occludedTrees.forEach(d => { if (d.group) d.group.visible = true; });
+            this._occludedTrees.clear();
+        }
 
         // Hide reticle & focus popup
         this.activeDoor = null;
@@ -1709,6 +1809,17 @@ class DuarApp {
                 y,
                 Math.cos(angle) * r
             );
+        } else if (lastActiveFlora) {
+            // Step back into forest orbit, facing the center rose from the current vantage point
+            const curAngle = Math.atan2(this.camera.position.x, this.camera.position.z);
+            const r = 28.5;
+            const y = 3.2;
+            camPos = new THREE.Vector3(
+                Math.sin(curAngle) * r,
+                y,
+                Math.cos(curAngle) * r
+            );
+            target = new THREE.Vector3(0, 1.6, 0);
         } else {
             const overview = this.getDefaultOverview();
             camPos = overview.camPos;
@@ -1716,11 +1827,13 @@ class DuarApp {
         }
 
         this.flyTo(camPos, target, 1.8, () => {
-            if (this.viewMode !== 'forest') {
-                this.controls.autoRotate = true;
-                this.controls.autoRotateSpeed = -0.6;
-            } else {
-                this.controls.autoRotate = false;
+            // Landing from a flight restores whatever the motion control says --
+            // it does not decide for itself. Forcing rotation on here meant a
+            // paused scene started spinning again after closing a painting, and
+            // forcing it off in the forest meant it never resumed there at all.
+            this.controls.autoRotate = !this.motionPaused;
+            if (!this.motionPaused) {
+                this.controls.autoRotateSpeed = ROTATE_SPEED_FOR[this.viewMode] ?? -0.8;
             }
         });
 
@@ -1754,27 +1867,36 @@ class DuarApp {
     }
 
     setupLighting() {
-        const ambient = new THREE.AmbientLight(0xfff5ea, 0.05);
+        // Ambient is the flattest possible fill -- it lifts lit and shadowed
+        // surfaces by exactly the same amount, which is precisely what removes
+        // contrast. Keep it barely present and let the hemisphere light, which
+        // at least distinguishes sky from ground, do the filling.
+        const ambient = new THREE.AmbientLight(0xfff5ea, 0.015);
         this.scene.add(ambient);
         this.hemiLight = new THREE.HemisphereLight(0xfff3d8, 0x221c16, 0.28);
         this.scene.add(this.hemiLight);
 
-        const shadowRes = this.isMobile ? 1024 : 2048;
+        // 85-unit half-frustum over 1536 texels is ~11 cm per texel -- coarser
+        // than a leaf, so leaf-on-leaf shadows could not resolve at all. The
+        // shadow map is cached rather than redrawn per frame, so a larger one
+        // costs memory and an occasional rebuild rather than frame time.
+        const shadowRes = this.isMobile ? 1024 : 3072;
 
         this.sunDist = 1600;
-        this.sunLight = new THREE.DirectionalLight(0xfff2c8, 2.5); // Warm solar light
+        this.sunLight = new THREE.DirectionalLight(0xfff2c8, 3.3); // Warm solar light
         this.sunLight.castShadow = true;
         this.sunLight.shadow.mapSize.set(shadowRes, shadowRes);
-        this.sunLight.shadow.camera.near = 1.0;
-        this.sunLight.shadow.camera.far = 700;
-        const d = 75; // Covers all trees, rose, and terrain with high texel density
+        this.sunLight.shadow.camera.near = 10.0;
+        this.sunLight.shadow.camera.far = 650;
+        const d = 85; // Covers all 21 trees and their long slanting shadows across the terrain
         this.sunLight.shadow.camera.left = -d;
         this.sunLight.shadow.camera.right = d;
         this.sunLight.shadow.camera.top = d;
         this.sunLight.shadow.camera.bottom = -d;
-        this.sunLight.shadow.bias = -0.0003;
-        this.sunLight.shadow.normalBias = 0.025;
-        this.sunLight.shadow.radius = 2.0;
+        this.sunLight.shadow.camera.updateProjectionMatrix();
+        this.sunLight.shadow.bias = -0.0001;      // finer texels need less bias
+        this.sunLight.shadow.normalBias = 0.018;
+        this.sunLight.shadow.radius = 1.2;       // and less blur to hide them
         this.scene.add(this.sunLight);
         this.scene.add(this.sunLight.target);
 
@@ -1794,15 +1916,16 @@ class DuarApp {
         this.moonLight = new THREE.DirectionalLight(0xc8d8e8, 1.4);
         this.moonLight.castShadow = true;
         this.moonLight.shadow.mapSize.set(shadowRes, shadowRes);
-        this.moonLight.shadow.camera.near = 1.0;
-        this.moonLight.shadow.camera.far = 700;
+        this.moonLight.shadow.camera.near = 10.0;
+        this.moonLight.shadow.camera.far = 650;
         this.moonLight.shadow.camera.left = -d;
         this.moonLight.shadow.camera.right = d;
         this.moonLight.shadow.camera.top = d;
         this.moonLight.shadow.camera.bottom = -d;
-        this.moonLight.shadow.bias = -0.0003;
-        this.moonLight.shadow.normalBias = 0.025;
-        this.moonLight.shadow.radius = 2.0;
+        this.moonLight.shadow.camera.updateProjectionMatrix();
+        this.moonLight.shadow.bias = -0.0001;     // matches the sun: same map size,
+        this.moonLight.shadow.normalBias = 0.018; // so the same bias is correct
+        this.moonLight.shadow.radius = 1.2;
         this.scene.add(this.moonLight);
         this.scene.add(this.moonLight.target);
 
@@ -1991,6 +2114,7 @@ class DuarApp {
             roughness: 1.0,
             metalness: 0.0,
             envMapIntensity: 0.0,
+            side: THREE.DoubleSide,
             transparent: true,
             depthWrite: true,
             polygonOffset: true,
@@ -2049,43 +2173,27 @@ class DuarApp {
                 '#include <dithering_fragment>',
                 `
                 #include <dithering_fragment>
-                // Natural planetary horizon illusion: solid ground for all paintings (r <= 112m), softly fades at perimeter
                 float r = length(vGroundWorldPos.xz);
-                float edgeFade = 1.0 - smoothstep(112.0, 150.0, r);
-                gl_FragColor.a *= edgeFade;
 
-                // Uneven muddy patches and damp earth pooling in the forest
+                // Plain green floor in forest mode with life wave and soft horizon fog dissolve
                 if (uForestActive > 0.01) {
-                    vec2 mPos = vGroundWorldPos.xz * 0.08;
-                    float mudPool = sin(mPos.x * 2.1 + sin(mPos.y * 1.8)) * cos(mPos.y * 1.9 + sin(mPos.x * 2.3));
-                    float microMud = sin(vGroundWorldPos.x * 0.42) * cos(vGroundWorldPos.z * 0.42) * 0.5;
-                    float mudVal = smoothstep(0.12, 0.68, mudPool * 0.75 + microMud * 0.25);
-                    
-                    // Dark damp muddy silt and deep wet earth
-                    vec3 drySoil = vec3(0.26, 0.22, 0.16);
-                    vec3 wetMud = vec3(0.08, 0.06, 0.04);
-                    vec3 deepSilt = vec3(0.035, 0.024, 0.016);
-
-                    vec3 mudColor = mix(drySoil, wetMud, mudVal);
-                    mudColor = mix(mudColor, deepSilt, pow(mudVal, 2.2));
-
-                    // Modulate floor with damp muddy patches
-                    gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * mudColor * 2.8, mudVal * 0.72 * uForestActive);
-
-                    // Wet muddy sheen under light
-                    float wetGleam = pow(max(0.0, mudVal), 3.0) * 0.18 * uForestActive;
-                    gl_FragColor.rgb += vec3(wetGleam * 0.65, wetGleam * 0.80, wetGleam);
-                }
-
-                // Bioluminescent life ring along the active ground wave
-                if (uForestActive > 0.01) {
+                    // Bioluminescent life ring along the active ground wave
                     float waveFront = uForestWave * 145.0;
                     float distToWave = abs(r - waveFront);
                     float edgeGlow = exp(-distToWave * distToWave * 0.015) * (1.0 - uForestWave * 0.7);
-                    gl_FragColor.rgb += vec3(0.22, 0.42, 0.16) * edgeGlow * uForestActive;
-                }
+                    gl_FragColor.rgb += vec3(0.06, 0.12, 0.04) * edgeGlow * uForestActive;
 
-                if (gl_FragColor.a <= 0.002) discard;
+                    // Infinite horizon blend: outer boundary (115m - 149m) smoothly dissolves into fog
+                    #ifdef USE_FOG
+                    float edgeFog = smoothstep(115.0, 149.0, r);
+                    gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, edgeFog);
+                    #endif
+                } else {
+                    // Natural planetary horizon illusion for gallery modes: solid ground for all paintings (r <= 112m), softly fades at perimeter
+                    float edgeFade = 1.0 - smoothstep(112.0, 150.0, r);
+                    gl_FragColor.a *= edgeFade;
+                    if (gl_FragColor.a <= 0.002) discard;
+                }
                 `
             );
         };
@@ -2154,6 +2262,9 @@ class DuarApp {
     // Tear down the current door set completely. Without disposing here, toggling
     // views repeatedly would leak a full set of geometries and textures each time.
     clearDoors() {
+        if (this._occludedTrees) {
+            this._occludedTrees.clear();
+        }
         this.activeDoor = null;
         this.hoveredDoor = null;
         this._hideReticle();
@@ -2214,10 +2325,26 @@ class DuarApp {
 
     // Fade the current doors out, build the new world, fade it in. Staggered
     // outward from the centre so it reads as the world responding, not a refresh.
-    async switchView(mode) {
+    // `keepCamera` leaves the camera exactly where it is and only swaps what is
+    // in the world. Clicking the centre object is a request to change the scene,
+    // not to be moved somewhere else -- being flown back to a default overview
+    // loses whatever the visitor had framed and makes the three views feel like
+    // three separate pages rather than one place changing around you.
+    async switchView(mode, { keepCamera = false } = {}) {
         if (this._switching || mode === this.viewMode) return;
         this._switching = true;
         this.viewMode = mode;
+
+        // Under keepCamera the switch must change the contents of the world and
+        // nothing else. Each view wants its own minimum orbit distance, but
+        // raising it while the camera sits closer makes OrbitControls shove the
+        // camera outward on the next update -- a zoom change nobody asked for.
+        // Lower the floor to wherever the viewer already is; it is a slightly
+        // looser limit until they zoom out, which is invisible, where being
+        // pushed backwards is not.
+        this._minDistanceFloor = keepCamera
+            ? this.camera.position.distanceTo(this.controls.target)
+            : null;
 
         if (this.instaBtn) {
             this.instaBtn.style.display = mode === 'portfolio' ? 'inline-flex' : 'none';
@@ -2248,11 +2375,18 @@ class DuarApp {
                 .forEach((d) => requestTier(d, TIER.MID));
             gsap.to(this.bloomPass, { threshold: 0.92, strength: 0.20, duration: 0.6 });
         } else if (mode === 'forest') {
-            this.controls.autoRotate = false;
+            // A default for the view, not an override -- setMotionPaused stays
+            // the authority, so pressing play in the grove actually orbits.
+            this.controls.autoRotate = !this.motionPaused;
+            this.controls.autoRotateSpeed = ROTATE_SPEED_FOR.forest;
+            this.controls.maxPolarAngle = Math.PI * 0.54; // Full horizon gaze restored
+            this.controls.minDistance = Math.min(2.0, this._minDistanceFloor ?? 2.0);
             this.updateRingGeometries(false);
-            gsap.to(this.bloomPass, { threshold: 0.88, strength: 0.18, duration: 0.6 });
+            gsap.to(this.bloomPass, { threshold: 0.98, strength: 0.08, duration: 0.6 });
         } else {
             if (!this.motionPaused) this.controls.autoRotate = true;
+            this.controls.maxPolarAngle = Math.PI * 0.54;
+            this.controls.minDistance = Math.min(0.5, this._minDistanceFloor ?? 0.5);
             this.updateRingGeometries(false);
             gsap.to(this.bloomPass, {
                 threshold: this._bloomDefaults.threshold,
@@ -2272,9 +2406,18 @@ class DuarApp {
         // floor still darkens into night with everything else.
         if (this.groundMat) {
             if (mode === 'forest') {
-                this.groundMat.map = getForestGroundTexture();
+                this.groundMat.map = null; // Plain green color, no texture
+                this.groundMat.transparent = false;
+                this.groundMat.polygonOffset = false;
+                this.groundMat.roughness = 0.95;
+                this.groundMat.metalness = 0.0;
                 this.groundMat.needsUpdate = true;
             } else {
+                this.groundMat.transparent = true;
+                this.groundMat.polygonOffset = true;
+                this.groundMat.polygonOffsetFactor = 1;
+                this.groundMat.polygonOffsetUnits = 1;
+                this.groundMat.roughness = 1.0;
                 if (forestGroundUniforms.uForestActive.value > 0) {
                     gsap.to(forestGroundUniforms.uForestActive, {
                         value: 0.0,
@@ -2297,7 +2440,7 @@ class DuarApp {
         // Atmospheric depth: deepen fog in forest mode so distant trees dissolve
         // into atmospheric mist, restored to 0.002 in geometric modes.
         if (this.scene.fog) {
-            const targetDensity = mode === 'forest' ? 0.0075 : 0.002;
+            const targetDensity = 0.002;
             gsap.to(this.scene.fog, { density: targetDensity, duration: 0.8 });
         }
 
@@ -2305,13 +2448,24 @@ class DuarApp {
         // (default), the ceramic sculpture (portfolio), or a single rose on a
         // stem (forest). _showCenterpiece/_hideCenterpiece just wrap the same
         // scale-in/scale-out tween for whichever objects need which today.
-        const activeCenterpiece = { default: this.rock, portfolio: this.sculpture, forest: this.roseCenterpiece }[mode];
+        const activeCenterpiece = CENTREPIECE_FOR(this)[mode];
         [this.rock, this.sculpture, this.roseCenterpiece].forEach((obj) => {
             if (obj === activeCenterpiece) this._showCenterpiece(obj);
             else this._hideCenterpiece(obj);
         });
 
-        this.resetScene();
+        if (keepCamera) {
+            // Only what genuinely belongs to the outgoing world is torn down. The
+            // camera, the time-of-day speed, the pause state and whether the dock
+            // is showing all belong to the viewer, not to the world, so none of
+            // them are touched. resetScene() would reset all four.
+            this.closeAllDoors();
+            this.activeDoor = null;
+            this._hideReticle();
+            if (this.ringMat) gsap.to(this.ringMat, { opacity: 0.9, duration: 4.0, ease: 'power2.inOut' });
+        } else {
+            this.resetScene();
+        }
 
         const outgoing = [...this.doors];
         await new Promise(resolve => {
@@ -2335,6 +2489,11 @@ class DuarApp {
         else this.setupDoors();
 
         if (mode === 'forest') {
+            this.renderer.shadowMap.autoUpdate = true;
+            gsap.delayedCall(4.2, () => {
+                this.renderer.shadowMap.autoUpdate = false;
+                this.renderer.shadowMap.needsUpdate = true;
+            });
             // Animate ground life wave & meadow grass sprouting outward across the terrain
             forestGroundUniforms.uForestActive.value = 1.0;
             forestGroundUniforms.uForestWave.value = 0.0;
@@ -2362,33 +2521,18 @@ class DuarApp {
                     }
                     const dist = Math.sqrt(door.group.position.lengthSq());
                     // Base delay times emergence to the ground wave passing the trunk
-                    const baseDelay = 0.25 + (dist / 120.0) * 2.2 + (Math.sin(door.group.position.x * 2.1) * 0.12);
-                    const targetRotY = door.group.rotation.y;
+                    const baseDelay = 0.3 + (dist / 120.0) * 3.0 + (Math.sin(door.group.position.x * 2.1) * 0.18);
 
+                    // Trees grow. They do not spring. `back.out` overshoots past
+                    // full size and settles back, which on a 16m tree reads as a
+                    // rubber toy popping out of the ground -- and the separate
+                    // x/z timing made the canopy inflate after the trunk, which
+                    // compounded it. One eased scale on all three axes, slower,
+                    // is what reads as growth.
                     door.group.scale.set(0.001, 0.001, 0.001);
-                    door.group.rotation.y = targetRotY - 0.22;
-
-                    // 1. Trunk emerges slowly upward from the soil
                     gsap.to(door.group.scale, {
-                        y: 1.0,
-                        duration: 2.4,
-                        ease: 'power2.out',
-                        delay: baseDelay
-                    });
-
-                    // 2. Canopy branches and foliage unfurl and pop outward
-                    gsap.to(door.group.scale, {
-                        x: 1.0,
-                        z: 1.0,
-                        duration: 2.1,
-                        ease: 'back.out(1.22)',
-                        delay: baseDelay + 0.35
-                    });
-
-                    // 3. Gentle organic twist as roots anchor
-                    gsap.to(door.group.rotation, {
-                        y: targetRotY,
-                        duration: 2.5,
+                        x: 1.0, y: 1.0, z: 1.0,
+                        duration: 4.2,
                         ease: 'power2.out',
                         delay: baseDelay
                     });
@@ -2402,7 +2546,7 @@ class DuarApp {
                     door.group.scale.setScalar(0.001);
                     gsap.to(door.group.scale, {
                         x: 1, y: 1, z: 1,
-                        duration: 0.7, ease: 'back.out(1.4)', delay: i * 0.035
+                        duration: 1.1, ease: 'back.out(1.05)', delay: i * 0.045
                     });
                 });
         }
@@ -2479,7 +2623,16 @@ class DuarApp {
         // getDefaultOverview() would otherwise target -- the opening shot is about the
         // room as a whole. (Home / resetScene still use the painting-targeted framing;
         // this is deliberately a separate, neutral pose used only for the opening.)
-        if (!this.activeDoor && this.viewMode === 'portfolio') {
+        // First load only. This block teleports the camera to INTRO_HEIGHT and
+        // arms the opening crane; running it on a later switch snapped the view
+        // 130 units into the sky, and because _maybeStartIntro() correctly
+        // refuses to replay an intro it had already played, nothing ever brought
+        // the camera back down -- it simply stayed up there. It also left
+        // maxDistance raised to INTRO_HEIGHT + 60 permanently.
+        //
+        // Re-entering the gallery later is an ordinary view change, and gets the
+        // ordinary smooth flight from wherever the viewer happens to be.
+        if (!this.activeDoor && this.viewMode === 'portfolio' && !this._introStarted) {
             this._introOverview = {
                 camPos: new THREE.Vector3(0, 3.0, 28.5),
                 target: new THREE.Vector3(0, 1.6, 0)
@@ -2502,6 +2655,29 @@ class DuarApp {
     // billboard loop in animate(), which are what keep a tree from being treated
     // like a clickable, camera-facing door once it's sitting in that array.
     buildForest() {
+        const speciesMeta = {
+            banyan: {
+                title: 'Banyan Tree',
+                meta: 'Ficus benghalensis · Canopy 28m',
+                description: 'The majestic national tree of India, known for expansive aerial prop roots and immortal vitality.'
+            },
+            peepal: {
+                title: 'Peepal / Bodhi Tree',
+                meta: 'Ficus religiosa · Bodhi Fig',
+                description: 'Venerated across ancient traditions as the tree of wisdom and enlightenment, with heart-shaped leaves.'
+            },
+            mango: {
+                title: 'Mango Tree',
+                meta: 'Mangifera indica · Evergreen Canopy',
+                description: 'King of fruits in Punjabi folklore and Sanskrit literature, symbolizing prosperity and abundant life.'
+            },
+            neem: {
+                title: 'Neem Tree',
+                meta: 'Azadirachta indica · Indian Margosa',
+                description: 'Renowned as nature\'s pharmacy, revered for cooling medicinal shade and enduring purity.'
+            }
+        };
+
         layoutForest().forEach(({ species, x, z, angle, seed, scale }) => {
             const group = createTree(species, { seed, scale });
             const groundY = getForestElevation(x, z);
@@ -2509,9 +2685,17 @@ class DuarApp {
             group.rotation.y = angle; // faces outward from centre, not the camera
             this.scene.add(group);
 
+            const meta = speciesMeta[species] || { title: `${species.charAt(0).toUpperCase() + species.slice(1)} Tree` };
             this.doors.push({
                 group,
+                species,
+                scale,
+                title: meta.title,
+                name: meta.title,
+                meta: meta.meta,
+                description: meta.description,
                 isTree: true,
+                isFlora: true,
                 isOpen: false,
                 swayGroup: group.userData.swayGroup,
                 swayAmplitude: group.userData.swayAmplitude,
@@ -2523,7 +2707,7 @@ class DuarApp {
         // Floor cover: one static grass field plus a scatter of shrubs
         const { grass, shrubs } = createForestFloor();
         this.scene.add(grass);
-        this.doors.push({ group: grass, isTree: true, isOpen: false });
+        this.doors.push({ group: grass, isTree: true, isGrass: true, isOpen: false });
         shrubs.forEach((shrub) => {
             const groundY = getForestElevation(shrub.position.x, shrub.position.z);
             shrub.position.y = groundY;
@@ -2531,6 +2715,7 @@ class DuarApp {
             this.doors.push({
                 group: shrub,
                 isTree: true,
+                isShrub: true,
                 isOpen: false,
                 swayGroup: shrub.userData.swayGroup,
                 swayAmplitude: shrub.userData.swayAmplitude,
@@ -2539,7 +2724,7 @@ class DuarApp {
             });
         });
 
-        this._hoverTargets = null; // trees carry no portalHitbox, so nothing new to add here
+        this._hoverTargets = null; // rebuilt lazily on the next hover check
     }
 
     // Fly to a painting and centre it, framed so the whole work is on screen.
@@ -2568,6 +2753,164 @@ class DuarApp {
             this.controls.autoRotate = false;   // hold still while looking
             if (this.activeDoor === door) this._showReticle();
         });
+    }
+
+    // Fly to a tree or the sacred rose, framing the complete height and width
+    // with optical margins tailored for both mobile phone and widescreen desktop.
+    focusFlora(door) {
+        if (this.isTraveling || this._switching) return;
+        this.dismissIntro();
+
+        const obj = door.group || door;
+        obj.updateMatrixWorld(true);
+
+        // Measure visible geometry extents
+        const box = new THREE.Box3();
+        obj.traverse((child) => {
+            if (child.isMesh && child.visible && child.name !== 'ContactShadow') {
+                if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
+                box.expandByObject(child);
+            }
+        });
+
+        if (box.isEmpty()) {
+            box.setFromObject(obj);
+        }
+
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        const floraHeight = Math.max(size.y, 0.5);
+        // Canopy footprint diameter across any viewing angle
+        const floraWidth = Math.max(size.x, size.z, 0.5);
+
+        // Precise optical framing: fits both height and width on narrow phone or widescreen desktop
+        const vFovRad = (this.camera.fov * Math.PI) / 180;
+        const aspect = Math.max(this.camera.aspect, 0.35);
+        const fitHeight = (floraHeight / 2) / Math.tan(vFovRad / 2);
+        const fitWidth = (floraWidth / 2) / (Math.tan(vFovRad / 2) * aspect);
+        // 25% margin ensures comfortable breathing room around the canopy and roots
+        const distance = Math.max(fitHeight, fitWidth) * 1.25;
+
+        // Visual target center
+        const target = new THREE.Vector3(
+            center.x,
+            door.isRose ? center.y : (box.min.y + floraHeight * 0.48),
+            center.z
+        );
+
+        // Camera viewpoint along current camera direction
+        let dir = new THREE.Vector3().subVectors(this.camera.position, target);
+        dir.y = 0;
+        if (dir.lengthSq() < 1e-4) {
+            dir.set(0, 0, 1);
+        } else {
+            dir.normalize();
+        }
+
+        const camPos = target.clone().addScaledVector(dir, distance);
+        const groundY = getForestElevation(camPos.x, camPos.z);
+
+        if (door.isRose) {
+            // Elegant slight elevation looking down into the rose bloom
+            camPos.y = Math.max(1.35, target.y + distance * 0.28);
+        } else {
+            // Level eye-line view at tree mid-height avoiding tilt distortion
+            camPos.y = Math.max(groundY + 1.8, target.y);
+        }
+
+        this.activeDoor = door;
+        this.flyTo(camPos, target, 1.8, () => {
+            this.controls.target.copy(target);
+            this.controls.autoRotate = false;
+            if (this.activeDoor === door) this._showReticle();
+        });
+    }
+
+    // In full view of a tree or the sacred rose, dynamically hide any other trees
+    // standing in front of the camera sightline to guarantee an open, unobstructed view.
+    _updateForestFocusOcclusion() {
+        if (this.viewMode !== 'forest' || !this.activeDoor) {
+            if (this._occludedTrees && this._occludedTrees.size > 0) {
+                this._occludedTrees.forEach(d => {
+                    if (d.group) d.group.visible = true;
+                });
+                this._occludedTrees.clear();
+            }
+            return;
+        }
+
+        if (!this._occludedTrees) this._occludedTrees = new Set();
+
+        const targetObj = this.activeDoor.group || this.activeDoor;
+        if (!targetObj) return;
+
+        const camPos = this.camera.position;
+        const targetPos = targetObj.position;
+
+        const dx = targetPos.x - camPos.x;
+        const dz = targetPos.z - camPos.z;
+        const segLenSq = dx * dx + dz * dz;
+        if (segLenSq < 1e-4) return;
+        const segLen = Math.sqrt(segLenSq);
+        const uX = dx / segLen;
+        const uZ = dz / segLen;
+
+        const currentOccluded = new Set();
+
+        for (let i = 0; i < this.doors.length; i++) {
+            const door = this.doors[i];
+            if (!door.isTree || !door.group || door === this.activeDoor || door.group === targetObj || door.isGrass) {
+                continue;
+            }
+
+            const pos = door.group.position;
+            const wx = pos.x - camPos.x;
+            const wz = pos.z - camPos.z;
+
+            // Projection along camera-to-target sightline
+            const proj = wx * uX + wz * uZ;
+            const t = proj / segLen;
+
+            const baseRadius = {
+                banyan: 14.0,
+                peepal: 9.0,
+                mango: 7.5,
+                neem: 6.5,
+            }[door.species] || (door.isShrub ? 1.0 : 7.0);
+
+            const effectiveRadius = baseRadius * (door.scale || door.group.scale?.x || 1.0);
+
+            // Perpendicular distance from sightline segment
+            const perpX = wx - proj * uX;
+            const perpZ = wz - proj * uZ;
+            const perpDist = Math.sqrt(perpX * perpX + perpZ * perpZ);
+            const distToCam = Math.sqrt(wx * wx + wz * wz);
+
+            // Hide if standing between camera and target sightline, or if right at camera position
+            const isAlongSightline = (t > 0.05 && t < 0.90 && perpDist < effectiveRadius + 1.2);
+            const isEngulfingCamera = (distToCam < effectiveRadius * 0.75 && t < 0.90);
+
+            if (isAlongSightline || isEngulfingCamera) {
+                currentOccluded.add(door);
+            }
+        }
+
+        // Restore trees no longer occluded
+        this._occludedTrees.forEach(door => {
+            if (!currentOccluded.has(door) && door.group) {
+                door.group.visible = true;
+            }
+        });
+
+        // Hide newly occluded trees
+        currentOccluded.forEach(door => {
+            if (door.group && door.group.visible) {
+                door.group.visible = false;
+            }
+        });
+
+        this._occludedTrees = currentOccluded;
     }
 
     setupDoors() {
@@ -2835,6 +3178,15 @@ class DuarApp {
         this.roseCenterpiece = createRoseCenterpiece();
         this.roseCenterpiece.visible = false;
         this.scene.add(this.roseCenterpiece);
+        this.roseDoor = {
+            group: this.roseCenterpiece,
+            isRose: true,
+            isFlora: true,
+            title: 'Duar 3.0',
+            name: 'Duar 3.0',
+            meta: 'Rosa damascena · Living Centerpiece',
+            description: 'A flourishing velvety ruby rose resting peacefully at the sanctuary center.'
+        };
     }
 
     setupDustMotes() {
@@ -2869,12 +3221,17 @@ class DuarApp {
         this.applyCameraFraming();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.composer.setSize(window.innerWidth, window.innerHeight);
-        // A phone turned on its side changes how much gallery fits; re-frame the
-        // overview so the rings stay composed instead of drifting off-screen.
-        if (!this.activeDoor && !this.isTraveling && this.controls) {
+        // A phone turned on its side changes how much gallery fits, so the
+        // overview is re-framed -- but as a short glide, not a teleport, and only
+        // when the viewer is still near the default framing. Someone who has
+        // orbited or zoomed somewhere deliberately should keep their view through
+        // a resize rather than being yanked back to the default.
+        if (!this.activeDoor && !this.isTraveling && this.controls && !this._switching) {
             const overview = this.getDefaultOverview();
-            this.camera.position.copy(overview.camPos);
-            this.controls.target.copy(overview.target);
+            const drift = this.camera.position.distanceTo(overview.camPos);
+            if (drift > 0.5 && drift < 14.0) {
+                this.flyTo(overview.camPos, overview.target, 0.6);
+            }
         }
     }
 
@@ -2923,12 +3280,15 @@ class DuarApp {
             this.sunMesh.visible = sunFade > 0.001;
 
             // True solar / lunar altitude checks
-            // True solar / lunar altitude checks
-            const isSunActive = sky.sunAlt > 0.01;
+            const isSunActive = sky.sunAlt > 0.005;
 
             if (isSunActive) {
-                // Daytime: sunLight is active and casts crisp, warm shadows
-                this.sunLight.intensity = Math.max(1.8, sky.sH * 2.2);
+                // Daytime: sunLight casts long, crisp, changing shadows across all trees
+                // Dynamic solar elevation modulation: low-angle golden dusk/dawn -> powerful midday sun
+                const sunElevationFactor = Math.sin(Math.max(0.05, sky.sunAlt));
+                const baseSun = this.viewMode === 'forest' ? 1.5 : 2.2;
+                const sunElevMult = this.viewMode === 'forest' ? 0.9 : 1.6;
+                this.sunLight.intensity = baseSun + (sunElevationFactor * sunElevMult);
                 this.sunLight.castShadow = true;
                 this.moonLight.intensity = 0;
                 this.moonLight.castShadow = false;
@@ -2936,7 +3296,7 @@ class DuarApp {
                 // Nighttime: moonlight is ALWAYS active and casts crisp, cool nocturnal shadows across everything!
                 this.sunLight.intensity = 0;
                 this.sunLight.castShadow = false;
-                this.moonLight.intensity = Math.max(1.35, sky.mH * 1.8);
+                this.moonLight.intensity = Math.max(1.5, sky.mH * 2.0);
                 this.moonLight.castShadow = true;
 
                 // Ensure night shadow-casting light is well elevated (minimum altitude angle)
@@ -2946,6 +3306,12 @@ class DuarApp {
                 const elevY = Math.max(160, Math.abs(sky.cel.moonPos.y));
                 _moonDirScratch.set(moonX, elevY, moonZ).normalize().multiplyScalar(320);
                 this.moonLight.position.copy(_moonDirScratch);
+            }
+
+            const sunAngleDelta = Math.abs(this.sunAngle - (this._lastShadowSunAngle || 0));
+            if (sunAngleDelta > 0.008) {
+                this._lastShadowSunAngle = this.sunAngle;
+                this.renderer.shadowMap.needsUpdate = true;
             }
 
             const angleMod = ((this.sunAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
@@ -2989,32 +3355,47 @@ class DuarApp {
             const riseFactor = Math.cos(angleMod) * 0.5 + 0.5;
             _twiZenith.lerpColors(C_DUSK_ZENITH, C_DAWN_ZENITH, riseFactor);
             _twiHorizon.lerpColors(C_DUSK_HORIZON, C_DAWN_HORIZON, riseFactor);
+            _twiHorizonOpp.lerpColors(C_DUSK_HORIZON_OPP, C_DAWN_HORIZON_OPP, riseFactor);
 
-            if (sky.sunAlt > 0.10) {
+            // Twilight ran from +0.10 to -0.04 radians of solar altitude -- about
+            // 8 degrees, so the whole sunset passed in a blink. Widened to roughly
+            // civil-plus-nautical twilight, which is what gives the colour time to
+            // develop and read.
+            if (sky.sunAlt > 0.17) {
                 _skyColScratch.copy(C_DAY_ZENITH);
                 _horizColScratch.copy(C_DAY_HORIZON);
-            } else if (sky.sunAlt > -0.04) {
-                const t = (0.10 - sky.sunAlt) / 0.14;
+                _horizOppScratch.copy(C_DAY_HORIZON_OPP);
+            } else if (sky.sunAlt > -0.05) {
+                const t = (0.17 - sky.sunAlt) / 0.22;
                 _skyColScratch.lerpColors(C_DAY_ZENITH, _twiZenith, t);
                 _horizColScratch.lerpColors(C_DAY_HORIZON, _twiHorizon, t);
+                _horizOppScratch.lerpColors(C_DAY_HORIZON_OPP, _twiHorizonOpp, t);
             } else {
-                const t = Math.min(1.0, (-0.04 - sky.sunAlt) / 0.16);
+                const t = Math.min(1.0, (-0.05 - sky.sunAlt) / 0.20);
                 _skyColScratch.lerpColors(_twiZenith, C_NIGHT_ZENITH, t);
                 _horizColScratch.lerpColors(_twiHorizon, C_NIGHT_HORIZON, t);
+                _horizOppScratch.lerpColors(_twiHorizonOpp, C_NIGHT_HORIZON, t);
             }
 
             if (this.skySystem && this.skySystem.skyDomeMat) {
-                this.skySystem.skyDomeMat.uniforms.uZenithColor.value.copy(_skyColScratch);
-                this.skySystem.skyDomeMat.uniforms.uHorizonColor.value.copy(_horizColScratch);
+                const u = this.skySystem.skyDomeMat.uniforms;
+                u.uZenithColor.value.copy(_skyColScratch);
+                u.uHorizonColor.value.copy(_horizColScratch);
+                if (u.uHorizonOpposite) u.uHorizonOpposite.value.copy(_horizOppScratch);
             }
 
             this.scene.background = null;
             if (this.scene.fog) this.scene.fog.color.copy(_horizColScratch);
 
-            // Ambient sky & earth bounce light: maintains ground and sculpture visibility while keeping shadows deep
+            // Ambient sky & earth bounce light: maintains ground visibility while giving rich shadows on the unlit side of trees
             const hemiGroundNight = this.viewMode === 'forest' ? C_HEMI_FOREST_GROUND_NIGHT : C_HEMI_GROUND_NIGHT;
             const hemiGroundDay = this.viewMode === 'forest' ? C_HEMI_FOREST_GROUND_DAY : C_HEMI_GROUND_DAY;
-            this.hemiLight.intensity = 0.07 + (sky.sH * 0.15) + (sky.mH * 0.12);
+            // Daytime fill pulled down hard so shadows read as shadow. The night
+            // floor is left almost untouched -- at night the fill *is* the
+            // lighting, and cutting it there just makes the scene unreadable.
+            this.hemiLight.intensity = this.viewMode === 'forest'
+                ? 0.055 + (sky.sH * 0.07) + (sky.mH * 0.075)
+                : 0.06 + (sky.sH * 0.085) + (sky.mH * 0.11);
             this.hemiLight.color.lerpColors(C_HEMI_NIGHT, C_HEMI_DAY, sky.sH);
             this.hemiLight.groundColor.lerpColors(hemiGroundNight, hemiGroundDay, sky.sH);
 
@@ -3107,6 +3488,17 @@ class DuarApp {
         }
         if (this.viewMode === 'forest') {
             updateForestWind(this.time * 24, this._forestDragMotion * 0.85);
+
+            // Shade foliage against whichever light is actually dominant. Under
+            // moonlight the split is deliberately weak -- a hard lit/unlit
+            // terminator at night reads as daylight with the colour turned down.
+            const sunUp = this.sunLight.intensity > 0.01;
+            const key = sunUp ? this.sunLight : this.moonLight;
+            const strength = sunUp
+                ? THREE.MathUtils.clamp(this.sunLight.intensity / 2.0, 0, 1)
+                : THREE.MathUtils.clamp(this.moonLight.intensity / 1.4, 0, 1) * 0.55;
+            _keyLightDir.copy(key.position).normalize();
+            updateForestLighting(_keyLightDir, this.camera, strength);
         }
         if (this.sculpture && this.sculpture.visible) {
             this.sculpture.position.y = 0;
@@ -3236,17 +3628,38 @@ class DuarApp {
         }
 
         if (this.viewMode === 'forest') {
+            this._updateForestFocusOcclusion();
             this.controls.autoRotate = false;
+            this.controls.maxPolarAngle = Math.PI * 0.54;
+            this.controls.minDistance = 2.0;
+            this.controls.update();
+
+            // Strict terrain height clamp in forest mode: camera can never zoom or dip under the undulating ground
+            const groundY = getForestElevation(this.camera.position.x, this.camera.position.z);
+            const minH = groundY + 0.75;
+            if (this.camera.position.y < minH) {
+                this.camera.position.y = minH;
+            }
+        } else {
+            if (this._occludedTrees && this._occludedTrees.size > 0) {
+                this._occludedTrees.forEach(d => { if (d.group) d.group.visible = true; });
+                this._occludedTrees.clear();
+            }
+            this.controls.maxPolarAngle = Math.PI * 0.54;
+            this.controls.minDistance = 0.5;
+            this.controls.update();
+
+            // Ground floor clamp for geometric modes: camera stays above ground (>= 0.4m)
+            if (this.camera.position.y < 0.4) {
+                this.camera.position.y = 0.4;
+            }
         }
 
-        this.controls.update();
-
-        // Guaranteed ground floor clamp: camera stays above ground (>= 0.4m) while allowing low-angle upward sky gaze
-        if (this.camera.position.y < 0.4) {
-            this.camera.position.y = 0.4;
+        if (this.viewMode === 'forest') {
+            this.renderer.render(this.scene, this.camera);
+        } else {
+            this.composer.render();
         }
-
-        this.composer.render();
     }
 }
 new DuarApp();

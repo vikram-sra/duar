@@ -41,6 +41,17 @@ export const forestWindUniforms = {
     uGrassGrowth: { value: 1.0 }
 };
 
+// Direction of whichever light is currently dominant (sun, then moon), in VIEW
+// space, plus how strongly to shade by it. View space rather than world because
+// Three's `transformedNormal` is already view-space and already instancing-
+// aware, so the two can be compared directly without rebuilding the instance
+// transform in the shader.
+export const forestLightUniforms = {
+    uSunViewDir: { value: new THREE.Vector3(0, 1, 0) },
+    uShadeAmount: { value: 1.0 },
+    uBacksideShade: { value: 0.38 }
+};
+
 export const forestGroundUniforms = {
     uForestWave: { value: 0.0 },
     uForestActive: { value: 0.0 }
@@ -49,6 +60,53 @@ export const forestGroundUniforms = {
 export function updateForestWind(time, dynamicStrength = 0.0) {
     forestWindUniforms.uWindTime.value = time;
     forestWindUniforms.uWindStrength.value = dynamicStrength;
+}
+
+// Call once per frame with the dominant light's world direction. `strength` is
+// how much directional character the lighting has right now -- full in daylight,
+// low under moonlight, where a hard lit/unlit split would look wrong.
+const _sunViewScratch = new THREE.Vector3();
+export function updateForestLighting(lightWorldDir, camera, strength = 1.0) {
+    _sunViewScratch.copy(lightWorldDir).normalize().transformDirection(camera.matrixWorldInverse);
+    forestLightUniforms.uSunViewDir.value.copy(_sunViewScratch);
+    forestLightUniforms.uShadeAmount.value = THREE.MathUtils.clamp(strength, 0, 1);
+}
+
+// Leaves are drawn DoubleSide so they stay visible edge-on and from behind.
+// Three pays for that by flipping the shading normal on back faces, so a leaf
+// lit from behind shades exactly like one lit from the front and the canopy
+// loses its light-and-shade entirely -- everything reads uniformly bright.
+//
+// This restores it by shading against the *geometric* normal, which is not
+// flipped: a surface whose true normal points away from the sun darkens,
+// whichever side of it the camera happens to be on. Leaves are thin and
+// translucent, so the far side is dimmed rather than blacked out.
+function applyFoliageSunShading(shader) {
+    shader.uniforms.uSunViewDir = forestLightUniforms.uSunViewDir;
+    shader.uniforms.uShadeAmount = forestLightUniforms.uShadeAmount;
+    shader.uniforms.uBacksideShade = forestLightUniforms.uBacksideShade;
+
+    shader.vertexShader = 'varying vec3 vFoliageNormal;\n' + shader.vertexShader.replace(
+        '#include <defaultnormal_vertex>',
+        `#include <defaultnormal_vertex>
+         // View-space and instancing-aware, straight out of the stock chunk.
+         vFoliageNormal = transformedNormal;`
+    );
+
+    shader.fragmentShader = `
+        uniform vec3 uSunViewDir;
+        uniform float uShadeAmount;
+        uniform float uBacksideShade;
+        varying vec3 vFoliageNormal;
+    \n` + shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+         float sunFacing = dot(normalize(vFoliageNormal), normalize(uSunViewDir));
+         // Wide, soft terminator: a hard step across a canopy of flat quads
+         // reads as faceted rather than as light falling through leaves.
+         float lit = smoothstep(-0.35, 0.45, sunFacing);
+         gl_FragColor.rgb *= mix(1.0, mix(uBacksideShade, 1.0, lit), uShadeAmount);`
+    );
 }
 
 function applyFoliageWindShader(mat, flutterMult = 1.0) {
@@ -91,6 +149,10 @@ function applyFoliageWindShader(mat, flutterMult = 1.0) {
             transformed.y += abs(wave) * 0.05 * uWindStrength * heightCompliance;
             `
         );
+
+        // A material gets exactly one onBeforeCompile, so the directional
+        // shading is injected here rather than as a second hook.
+        applyFoliageSunShading(shader);
     };
 }
 
@@ -375,27 +437,27 @@ function createGulmoharBlossomGeometry() {
     return merged;
 }
 
-// Multi-Blade Grass Tuft Geometry (clump of 5 natural arching blades)
+// Multi-Blade Grass Tuft Geometry (clump of 6 small lush arching lawn blades)
 function createGrassClumpGeometry() {
     const parts = [];
-    const w = 0.055;
-    const len = 0.42;
+    const w = 0.022;    // Fine delicate lawn blade width
+    const len = 0.15;   // Small, manicured, lush grass height (~15cm)
 
     const bladeShape = new THREE.Shape();
     bladeShape.moveTo(-w, 0);
-    bladeShape.quadraticCurveTo(-w * 0.25, len * 0.55, w * 0.35, len * 1.10);
-    bladeShape.quadraticCurveTo(w * 0.20, len * 0.52, w, 0);
+    bladeShape.quadraticCurveTo(-w * 0.20, len * 0.55, w * 0.25, len * 1.05);
+    bladeShape.quadraticCurveTo(w * 0.15, len * 0.50, w, 0);
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
         const geo = new THREE.ShapeGeometry(bladeShape, 3);
         const pos = geo.attributes.position;
-        const s = 0.75 + Math.random() * 0.45;
-        const lean = 0.25 + Math.random() * 0.35;
-        const az = (i / 5) * Math.PI * 2 + Math.random() * 0.4;
+        const s = 0.80 + Math.random() * 0.40;
+        const lean = 0.18 + Math.random() * 0.28;
+        const az = (i / 6) * Math.PI * 2 + Math.random() * 0.35;
 
         for (let k = 0; k < pos.count; k++) {
             const y = pos.getY(k);
-            pos.setZ(k, Math.pow(y / len, 1.6) * 0.18);
+            pos.setZ(k, Math.pow(y / len, 1.5) * 0.05);
         }
         geo.computeVertexNormals();
         geo.scale(s, s, s);
@@ -594,55 +656,42 @@ export function getForestGroundTexture() {
     const c = document.createElement('canvas'); c.width = S; c.height = S;
     const ctx = c.getContext('2d');
 
-    // Base damp earthy loam
-    ctx.fillStyle = '#262016';
+    // Base rich vibrant botanical lawn green
+    ctx.fillStyle = '#3e7d22';
     ctx.fillRect(0, 0, S, S);
 
-    // Deep muddy pools, wet dark silt, and damp depressions
-    const soilTones = [
-        '#140f09', '#1b140b', '#120d08', '#241a10',
-        '#2d2114', '#18120a', '#1e160e', '#0f0a06'
+    // Lush velvet moss, clover, and emerald undertones (100% vibrant green palette)
+    const greenTones = [
+        '#488f28', '#56a632', '#3a7520', '#63b838',
+        '#428224', '#32681a', '#5bb034', '#38701e',
+        '#6cc240', '#4e992b', '#366d1c', '#529e29'
     ];
-    for (let i = 0; i < 320; i++) {
-        ctx.globalAlpha = 0.28 + Math.random() * 0.42;
-        ctx.fillStyle = soilTones[(Math.random() * soilTones.length) | 0];
+    for (let i = 0; i < 500; i++) {
+        ctx.globalAlpha = 0.35 + Math.random() * 0.45;
+        ctx.fillStyle = greenTones[(Math.random() * greenTones.length) | 0];
         ctx.beginPath();
         ctx.ellipse(
             Math.random() * S, Math.random() * S,
-            24 + Math.random() * 95, 16 + Math.random() * 70,
+            20 + Math.random() * 85, 14 + Math.random() * 60,
             Math.random() * Math.PI, 0, Math.PI * 2
         );
         ctx.fill();
     }
 
-    // Mossy undertones around the edges of damp swales
-    const mossTones = ['#222a14', '#2c3618', '#343f1c', '#1b2210'];
-    for (let i = 0; i < 180; i++) {
-        ctx.globalAlpha = 0.16 + Math.random() * 0.24;
-        ctx.fillStyle = mossTones[(Math.random() * mossTones.length) | 0];
-        ctx.beginPath();
-        ctx.ellipse(
-            Math.random() * S, Math.random() * S,
-            15 + Math.random() * 50, 10 + Math.random() * 38,
-            Math.random() * Math.PI, 0, Math.PI * 2
-        );
-        ctx.fill();
-    }
-
-    // Organic forest litter: pine needles, twigs, damp crushed bark
-    const litterColors = ['#3e2a16', '#4e331a', '#22150a', '#301f10', '#593b1d', '#120904'];
-    for (let i = 0; i < 2600; i++) {
-        ctx.globalAlpha = 0.22 + Math.random() * 0.50;
-        ctx.fillStyle = litterColors[(Math.random() * litterColors.length) | 0];
+    // Micro botanical lawn stippling: fine green blade flecks for rich close-up grass texture
+    const bladeFlecks = ['#72c944', '#84dc54', '#5fb336', '#92e860', '#4e9b2a', '#7ad048', '#63ba34'];
+    for (let i = 0; i < 9000; i++) {
+        ctx.globalAlpha = 0.40 + Math.random() * 0.45;
+        ctx.fillStyle = bladeFlecks[(Math.random() * bladeFlecks.length) | 0];
         const x = Math.random() * S, y = Math.random() * S;
-        ctx.fillRect(x, y, 2 + Math.random() * 6, 1 + Math.random() * 3);
+        ctx.fillRect(x, y, 1 + Math.random() * 3, 2 + Math.random() * 5);
     }
     ctx.globalAlpha = 1;
 
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(28, 28);
+    tex.repeat.set(32, 32);
     tex.colorSpace = THREE.SRGBColorSpace;
     _forestGroundTexture = tex;
     return tex;
@@ -915,11 +964,11 @@ function buildCanopy(speciesKey, preset, twigs, boughs, rand, pivot) {
         emissive: leafBase.clone().multiplyScalar(0.24),
         emissiveIntensity: 0.95,
     });
-
+    mat.shadowSide = THREE.DoubleSide;
     applyFoliageWindShader(mat, preset.flutterMult || 1.0);
 
     const inst = new THREE.InstancedMesh(sprayGeo, mat, totalCount);
-    inst.castShadow = false;
+    inst.castShadow = true;
     inst.receiveShadow = true;
 
     const m = new THREE.Matrix4();
@@ -1009,10 +1058,11 @@ function buildBlossomClusters(preset, blossomTwigs, rand, pivot) {
         emissiveIntensity: 0.95,
     });
 
+    blossomMat.shadowSide = THREE.DoubleSide;
     applyFoliageWindShader(blossomMat, 1.1);
 
     const inst = new THREE.InstancedMesh(gulmoharBlossomGeometry, blossomMat, blossomCount);
-    inst.castShadow = false;
+    inst.castShadow = true;
     inst.receiveShadow = true;
 
     const m = new THREE.Matrix4();
@@ -1081,11 +1131,11 @@ export function preloadForestGLBs(onComplete) {
 
     const loader = new GLTFLoader();
     const specs = [
-        { key: 'mango', url: getAssetUrl('models/mango_tree_2.glb'), targetHeight: 13.5, groundSink: 0.0 },
-        { key: 'neem', url: getAssetUrl('models/mango_tree.glb'), targetHeight: 10.5, groundSink: 0.0 },
-        { key: 'banyan', url: getAssetUrl('models/chinese_banyan_ficus_microcarpa.glb'), targetHeight: 12.5, groundSink: 0.0 },
-        { key: 'peepal', url: getAssetUrl('models/bodhi_tree.glb'), targetHeight: 11.0, groundSink: 1.25 },
-        { key: 'rose', url: getAssetUrl('models/red_rose.glb'), targetHeight: 1.55, groundSink: 0.0 }
+        { key: 'banyan', url: getAssetUrl('models/chinese_banyan_ficus_microcarpa.glb'), targetHeight: 22.0, groundSink: 0.12 },
+        { key: 'peepal', url: getAssetUrl('models/bodhi_tree.glb'), targetHeight: 20.0, groundSink: 2.15 },
+        { key: 'mango', url: getAssetUrl('models/mango_tree_2.glb'), targetHeight: 16.0, groundSink: 0.08 },
+        { key: 'neem', url: getAssetUrl('models/neem_tree.glb'), targetHeight: 16.0, groundSink: 2.15 },
+        { key: 'rose', url: getAssetUrl('models/red_rose.glb'), targetHeight: 1.45, groundSink: 0.0 }
     ];
 
     const promises = specs.map(spec => new Promise((resolve) => {
@@ -1115,19 +1165,50 @@ export function preloadForestGLBs(onComplete) {
                         if (child.geometry) {
                             sharedForestGeometries.add(child.geometry);
                         }
-                        if (child.material) {
-                            child.material.side = THREE.DoubleSide;
-                            child.material.shadowSide = THREE.DoubleSide;
-                            if (child.material.roughness !== undefined) {
-                                child.material.roughness = Math.max(child.material.roughness, 0.65);
+                        if (spec.key === 'rose') {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                            if (child.material) {
+                                child.material.side = THREE.DoubleSide;
+                                child.material.shadowSide = THREE.DoubleSide;
+                                // Velvety natural organic rose petal sheen, matte texture & zero artificial emissive
+                                child.material.roughness = 0.72;
+                                child.material.metalness = 0.0;
+                                child.material.emissive = new THREE.Color(0x000000);
+                                child.material.emissiveIntensity = 0.0;
+                                if (child.material.map) {
+                                    child.material.map.colorSpace = THREE.SRGBColorSpace;
+                                }
+                                child.material.needsUpdate = true;
                             }
-                            // Clean alpha mask handling for foliage (mango leaves, twigs, fruits)
+                        } else {
+                            if (spec.key === 'neem') {
+                                child.material.side = THREE.DoubleSide;
+                                child.material.shadowSide = THREE.DoubleSide;
+                                if (child.material.roughness !== undefined) {
+                                    child.material.roughness = Math.max(child.material.roughness, 0.65);
+                                }
+                            } else if (child.material.roughness !== undefined) {
+                                child.material.roughness = Math.max(child.material.roughness, 0.70);
+                            }
+                            // Clean alpha mask handling for foliage & branches (mango, neem, bodhi/peepal, banyan)
                             const isFoliageMat = child.material.name === 'Material.001' ||
                                                  child.material.name === 'Material.004' ||
+                                                 child.material.name === 'Material.002' ||
+                                                 child.material.name === 'Material.003' ||
+                                                 child.material.name === 'Bodhi_front_2_Mat' ||
                                                  child.material.alphaTest > 0 ||
-                                                 (child.material.name && /leaf|leaves|foliage/i.test(child.material.name)) ||
-                                                 (child.name && /leaf|leaves/i.test(child.name));
+                                                 child.material.transparent ||
+                                                 (child.material.name && /leaf|leaves|foliage|branch|vine|bodhi|front|001|002|003|004/i.test(child.material.name)) ||
+                                                 (child.name && /leaf|leaves|branch|vine|bodhi|front/i.test(child.name));
                             if (isFoliageMat && child.material.map) {
+                                // Foliage used to skip receiving shadows to avoid PCF
+                                // sampling across millions of leaf fragments. That was
+                                // the right call at 43M triangles; at 7.6M the scene can
+                                // afford it, and without it leaves take no shadow from
+                                // the canopy above them or from neighbouring trees, so a
+                                // grove renders as uniformly bright foliage with no depth.
+                                child.receiveShadow = true;
                                 child.material.alphaTest = 0.35;
                                 child.material.transparent = false;
                                 child.material.depthWrite = true;
@@ -1137,6 +1218,23 @@ export function preloadForestGLBs(onComplete) {
                                     map: child.material.map,
                                     alphaTest: 0.35
                                 });
+                                child.customDepthMaterial.side = THREE.DoubleSide;
+                            } else {
+                                child.receiveShadow = true;
+                            }
+
+                            // Directional shading for anything drawn DoubleSide, which
+                            // is every leaf and most bark here. See
+                            // applyFoliageSunShading for why the stock normal flip has
+                            // to be worked around.
+                            if (child.material.side === THREE.DoubleSide && !child.material._hasSunShading) {
+                                child.material._hasSunShading = true;
+                                const prior = child.material.onBeforeCompile;
+                                child.material.onBeforeCompile = (shader, renderer) => {
+                                    if (prior) prior(shader, renderer);
+                                    applyFoliageSunShading(shader);
+                                };
+                                child.material.needsUpdate = true;
                             }
                         }
                     }
@@ -1181,21 +1279,25 @@ export function createTree(speciesKey, { seed = 1, scale = 1 } = {}) {
     const template = _glbTreeCache.get(glbKey) || _glbTreeCache.get('mango') || _glbTreeCache.get('banyan');
 
     const applyInstanceScale = (instance) => {
-        const scaleJitter = 0.92 + rand() * 0.18;
-        if (speciesKey === 'neem') {
-            // Neem (Azadirachta indica): taller, slender, delicate upright proportion
-            instance.scale.set(
-                scaleJitter * scale * 0.78,
-                scaleJitter * scale * 1.20,
-                scaleJitter * scale * 0.78
-            );
+        const scaleJitter = 0.94 + rand() * 0.12;
+        if (speciesKey === 'banyan') {
+            // Full maturity Banyan (Ficus microcarpa/benghalensis): 28m colossus with expansive aerial canopy
+            instance.scale.x *= scaleJitter * scale * 1.28;
+            instance.scale.y *= scaleJitter * scale * 1.30;
+            instance.scale.z *= scaleJitter * scale * 1.28;
+        } else if (speciesKey === 'peepal') {
+            // Full maturity Peepal (Ficus religiosa): 26m towering cathedral crown reaching high into the sky
+            instance.scale.x *= scaleJitter * scale * 1.24;
+            instance.scale.y *= scaleJitter * scale * 1.30;
+            instance.scale.z *= scaleJitter * scale * 1.24;
         } else if (speciesKey === 'mango') {
-            // Mango (Mangifera indica): lush, grand canopy with increased towering height
-            instance.scale.set(
-                scaleJitter * scale * 1.20,
-                scaleJitter * scale * 1.52,
-                scaleJitter * scale * 1.20
-            );
+            // Full maturity Mango (Mangifera indica): 18m dense rounded umbrella canopy
+            instance.scale.x *= scaleJitter * scale * 1.12;
+            instance.scale.y *= scaleJitter * scale * 1.15;
+            instance.scale.z *= scaleJitter * scale * 1.12;
+        } else if (speciesKey === 'neem') {
+            // Full maturity Neem (Azadirachta indica): 16.5m graceful open feathery crown
+            instance.scale.multiplyScalar(scaleJitter * scale * 1.05);
         } else {
             instance.scale.multiplyScalar(scaleJitter * scale);
         }
@@ -1208,13 +1310,28 @@ export function createTree(speciesKey, { seed = 1, scale = 1 } = {}) {
                 child.castShadow = true;
                 child.receiveShadow = true;
                 if (child.material) {
+                    child.material.side = THREE.DoubleSide;
                     child.material.shadowSide = THREE.DoubleSide;
-                    if (child.material.alphaTest > 0 && child.material.map && !child.customDepthMaterial) {
+                    const isCutout = child.material.map && (
+                        child.material.alphaTest > 0 ||
+                        child.material.transparent ||
+                        (child.material.name && /leaf|leaves|foliage|branch|vine|bodhi|front|001|004/i.test(child.material.name)) ||
+                        (child.name && /leaf|leaves|branch|vine|bodhi|front/i.test(child.name))
+                    );
+                    // Cutout foliage receives shadows here too, for the same
+                    // reason as the GLB path: without it a canopy takes no
+                    // shadow from the branches above it and reads as flat.
+                    child.receiveShadow = true;
+                    if (isCutout && child.material.map && !child.customDepthMaterial) {
+                        child.material.alphaTest = 0.35;
+                        child.material.transparent = false;
+                        child.material.depthWrite = true;
                         child.customDepthMaterial = new THREE.MeshDepthMaterial({
                             depthPacking: THREE.RGBADepthPacking,
                             map: child.material.map,
-                            alphaTest: child.material.alphaTest
+                            alphaTest: 0.35
                         });
+                        child.customDepthMaterial.side = THREE.DoubleSide;
                     }
                 }
             }
@@ -1257,14 +1374,17 @@ export function createTree(speciesKey, { seed = 1, scale = 1 } = {}) {
 // ---------------------------------------------------------------------------
 
 function createGrassField(rand, innerR, outerR, count) {
-    const green = new THREE.Color(0x4a6f28);
+    const green = new THREE.Color(0x3e8022);     // Vibrant emerald green
+    const lightGreen = new THREE.Color(0x5ca832);// Sun-dappled lime green
+    const deepGreen = new THREE.Color(0x245214); // Deep velvety moss green
+
     const mat = new THREE.MeshStandardMaterial({
         color: 0xffffff,
-        roughness: 0.78,
+        roughness: 0.65,
         metalness: 0.0,
         side: THREE.DoubleSide,
         vertexColors: true,
-        emissive: green.clone().multiplyScalar(0.24),
+        emissive: green.clone().multiplyScalar(0.26),
         emissiveIntensity: 0.95,
     });
 
@@ -1272,15 +1392,13 @@ function createGrassField(rand, innerR, outerR, count) {
     applyGrassWindShader(mat);
 
     const inst = new THREE.InstancedMesh(grassClumpGeometry, mat, count);
-    inst.castShadow = true;
+    inst.castShadow = false;
     inst.receiveShadow = true;
 
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const s = new THREE.Vector3();
     const p = new THREE.Vector3();
-    const straw = new THREE.Color(0x8f7c3c);
-    const deep = new THREE.Color(0x2b4418);
 
     for (let i = 0; i < count; i++) {
         const r = innerR + (outerR - innerR) * Math.sqrt(rand());
@@ -1292,23 +1410,18 @@ function createGrassField(rand, innerR, outerR, count) {
 
         q.setFromAxisAngle(UP, rand() * Math.PI * 2);
 
-        // Thin out grass in muddy pools so dark glistening mud remains exposed
-        const mX = px * 0.08;
-        const mZ = pz * 0.08;
-        const mudVal = Math.sin(mX * 2.1 + Math.sin(mZ * 1.8)) * Math.cos(mZ * 1.9 + Math.sin(mX * 2.3));
-        let scale = 0.85 + rand() * 1.35;
-        if (mudVal > 0.30 && rand() < 0.65) {
-            scale *= 0.22; // Tiny ground moss/lichen in mud swales
-        }
-        s.set(scale, scale * (0.90 + rand() * 0.80), scale);
+        // Uniform, small, lush grass blades (manicured natural meadow)
+        const scale = 0.85 + rand() * 0.35;
+        s.set(scale, scale * (0.85 + rand() * 0.30), scale);
         m.compose(p, q, s);
         inst.setMatrixAt(i, m);
 
+        // 100% lush botanical greens - zero straw or brown
         const roll = rand();
-        if (roll < 0.14) _color.copy(green).lerp(straw, 0.4 + rand() * 0.45);
-        else if (roll < 0.45) _color.copy(green).lerp(deep, rand() * 0.65);
+        if (roll < 0.35) _color.copy(green).lerp(lightGreen, rand() * 0.85);
+        else if (roll < 0.70) _color.copy(green).lerp(deepGreen, rand() * 0.65);
         else _color.copy(green);
-        _color.offsetHSL((rand() - 0.5) * 0.03, 0, (rand() - 0.5) * 0.10);
+        _color.offsetHSL((rand() - 0.5) * 0.03, 0.05, (rand() - 0.5) * 0.08);
         inst.setColorAt(i, _color);
     }
 
@@ -1317,103 +1430,10 @@ function createGrassField(rand, innerR, outerR, count) {
     return inst;
 }
 
-function createShrub(seed) {
-    const rand = mulberry32(seed);
-    const group = new THREE.Group();
-    group.name = 'Shrub';
-
-    const h = 0.35 + rand() * 0.30;
-    const stubGeo = new THREE.CylinderGeometry(0.024, 0.048, h, 8, 1);
-    stubGeo.translate(0, h / 2, 0);
-    const stub = new THREE.Mesh(stubGeo, barkMaterial('twig'));
-    stub.castShadow = true;
-    group.add(stub);
-
-    const leafCount = 36 + Math.floor(rand() * 16);
-    const base = new THREE.Color(0x40732a);
-    const mat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        map: getFoliageTexture('mango'),
-        roughness: 0.68,
-        metalness: 0,
-        side: THREE.DoubleSide,
-        alphaTest: 0.4,
-        vertexColors: true,
-        emissive: base.clone().multiplyScalar(0.22),
-        emissiveIntensity: 0.9,
-    });
-
-    mat.shadowSide = THREE.DoubleSide;
-    applyFoliageWindShader(mat, 1.2);
-
-    const inst = new THREE.InstancedMesh(shrubLeafGeometry, mat, leafCount);
-    inst.castShadow = true;
-    inst.receiveShadow = true;
-
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const qJitter = new THREE.Quaternion();
-    const s = new THREE.Vector3();
-    const p = new THREE.Vector3();
-    const outward = new THREE.Vector3();
-    const axis = new THREE.Vector3();
-    const radius = 0.48 + rand() * 0.30;
-
-    for (let i = 0; i < leafCount; i++) {
-        const r = radius * Math.cbrt(rand());
-        const theta = rand() * Math.PI * 2;
-        const phi = Math.acos(2 * rand() - 1);
-        outward.set(
-            Math.sin(phi) * Math.cos(theta),
-            Math.abs(Math.cos(phi)) * 0.85 + 0.25,
-            Math.sin(phi) * Math.sin(theta)
-        ).normalize();
-        p.copy(outward).multiplyScalar(r);
-        p.y += h * 0.72;
-
-        q.setFromUnitVectors(UP, outward);
-        axis.set(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize();
-        qJitter.setFromAxisAngle(axis, (rand() - 0.5) * 1.1);
-        q.multiply(qJitter);
-
-        const scale = 0.85 + rand() * 0.50;
-        s.setScalar(scale);
-        m.compose(p, q, s);
-        inst.setMatrixAt(i, m);
-
-        _color.copy(base).offsetHSL((rand() - 0.5) * 0.04, 0, (rand() - 0.5) * 0.12);
-        inst.setColorAt(i, _color);
-    }
-
-    inst.instanceMatrix.needsUpdate = true;
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-    group.add(inst);
-
-    group.userData.swayGroup = group;
-    group.userData.swayAmplitude = 0.04;
-    group.userData.swayFreqMult = 1.25;
-    return group;
-}
-
 export function createForestFloor(seed = 5000) {
-    const rand = mulberry32(seed);
-    const innerR = BASE_RADIUS - 5;
-    const outerR = BASE_RADIUS + 4 * RING_SPACING + 8;
-    const grass = createGrassField(rand, Math.max(3, innerR), outerR, 10000);
+    const grass = new THREE.Group();
     grass.name = 'ForestGrass';
-
     const shrubs = [];
-    for (let i = 0; i < 20; i++) {
-        const r = innerR + rand() * (outerR - innerR);
-        const a = rand() * Math.PI * 2;
-        const shrub = createShrub(9000 + i);
-        shrub.position.set(Math.sin(a) * r, 0, Math.cos(a) * r);
-        shrub.rotation.y = rand() * Math.PI * 2;
-        shrub.scale.setScalar(0.9 + rand() * 0.5);
-        shrub.userData.seed = 9000 + i;
-        shrubs.push(shrub);
-    }
-
     return { grass, shrubs };
 }
 
@@ -1560,14 +1580,22 @@ export function createRoseCenterpiece(seed = 4242) {
     const group = new THREE.Group();
     group.name = 'RoseCenterpiece';
 
-    // 1. Fallen ruby petals scattered directly on the forest soil
+    // No painted contact-shadow disc here. It was a 2.6m dark circle under a
+    // 1.45m flower -- wider than the plant is tall, so it read as a disc drawn on
+    // the grass rather than as shade. The rose casts a real shadow now that
+    // foliage sends and receives them, which is both correctly sized and moves
+    // with the sun.
+
+    // Fallen ruby petals scattered directly on the forest soil with natural velvet texture & cast shadows
     const fallenPetalGeo = createPetalGeometry(0.15, 0.11);
     const fallenPetalMat = new THREE.MeshStandardMaterial({
-        color: 0xa41024,
-        roughness: 0.40,
+        color: 0x8a101f,
+        roughness: 0.72,
+        metalness: 0.0,
         side: THREE.DoubleSide,
-        emissive: 0x240206,
-        emissiveIntensity: 0.85,
+        shadowSide: THREE.DoubleSide,
+        emissive: 0x000000,
+        emissiveIntensity: 0.0,
     });
     for (let i = 0; i < 9; i++) {
         const petal = new THREE.Mesh(fallenPetalGeo, fallenPetalMat);
@@ -1579,10 +1607,11 @@ export function createRoseCenterpiece(seed = 4242) {
         petal.rotation.z = (rand() - 0.5) * 0.3;
         petal.scale.setScalar(0.72 + rand() * 0.38);
         petal.castShadow = true;
+        petal.receiveShadow = true;
         group.add(petal);
     }
 
-    // 2. Photorealistic 3D Red Rose Model (grounded directly on the natural soil)
+    // 3. Photorealistic 3D Red Rose Model (grounded directly on the natural soil)
     const rosePivot = new THREE.Group();
     rosePivot.name = 'RedRoseGLBPivot';
     rosePivot.position.set(0, 0, 0);
@@ -1593,7 +1622,18 @@ export function createRoseCenterpiece(seed = 4242) {
             if (child.isMesh) {
                 child.castShadow = true;
                 child.receiveShadow = true;
-                if (child.material) child.material.shadowSide = THREE.DoubleSide;
+                if (child.material) {
+                    child.material.shadowSide = THREE.DoubleSide;
+                    child.material.side = THREE.DoubleSide;
+                    child.material.roughness = 0.72;
+                    child.material.metalness = 0.0;
+                    child.material.emissive = new THREE.Color(0x000000);
+                    child.material.emissiveIntensity = 0.0;
+                    if (child.material.map) {
+                        child.material.map.colorSpace = THREE.SRGBColorSpace;
+                    }
+                    child.material.needsUpdate = true;
+                }
             }
         });
     };
@@ -1612,6 +1652,8 @@ export function createRoseCenterpiece(seed = 4242) {
         });
     }
 
+    // Natural botanical ambient response without artificial point light blowout
+
     // 4. Golden pollen motes
     const moteCount = 36;
     const moteGeo = new THREE.BufferGeometry();
@@ -1628,11 +1670,10 @@ export function createRoseCenterpiece(seed = 4242) {
     const motes = new THREE.Points(
         moteGeo,
         new THREE.PointsMaterial({
-            color: 0xffd970,
-            size: 0.045,
+            color: 0xd4af37,
+            size: 0.02,
             transparent: true,
-            opacity: 0.80,
-            blending: THREE.AdditiveBlending,
+            opacity: 0.25,
             depthWrite: false
         })
     );
@@ -1647,90 +1688,124 @@ export function createRoseCenterpiece(seed = 4242) {
 }
 
 // ---------------------------------------------------------------------------
-// 9. Balanced Ring Placement (Zero Jitter Stutter, 60 FPS Locked)
+// 9. Authentic Punjabi Baag (Orchard / Sacred Grove) Layout
 // ---------------------------------------------------------------------------
 
-// 21 trees: 2 additional trees of each type with organic randomized placement
+// 44 trees distributed organically like a true Punjabi baag orchard:
+// Authentic Indian baag (orchard grove) layout: denser distribution (50 trees, 68m perimeter)
+// with strictly guaranteed zero canopy intersection and natural root flare preservation.
 export function layoutForest() {
-    const rand = mulberry32(8491);
+    const rand = mulberry32(80);
 
-    // 2 added trees for each of the 4 species:
-    // Mango: 3 + 2 = 5
-    // Neem: 5 + 2 = 7
-    // Peepal: 3 + 2 = 5
-    // Banyan: 2 + 2 = 4
-    const speciesList = [
-        'mango', 'mango', 'mango', 'mango', 'mango',
-        'neem', 'neem', 'neem', 'neem', 'neem', 'neem', 'neem',
-        'peepal', 'peepal', 'peepal', 'peepal', 'peepal',
-        'banyan', 'banyan', 'banyan', 'banyan'
-    ];
-
-    const speciesRadiusRange = {
-        mango: [16.5, 25.0],
-        neem: [18.0, 28.5],
-        peepal: [22.0, 32.0],
-        banyan: [25.0, 35.0]
+    const baseRadii = {
+        banyan: 12.65,
+        peepal: 7.15,
+        mango: 8.15,
+        neem: 6.55
     };
 
-    const speciesBaseScale = {
-        mango: 1.14,
-        neem: 1.02,
-        peepal: 1.03,
-        banyan: 1.10
-    };
-
+    const minCenterRadius = 10.2; // Intimate, sunlit clearing around the central sacred rose
+    const maxRadius = 68.0;       // Lush, dense baag perimeter
     const placed = [];
-    const minDistance = 5.6;
 
-    for (let i = 0; i < speciesList.length; i++) {
-        const species = speciesList[i];
-        const [minR, maxR] = speciesRadiusRange[species];
-        const baseScale = speciesBaseScale[species];
+    // Grand sentinel Banyans on opposite perimeters
+    const b1Angle = rand() * Math.PI * 2;
+    const b1R = maxRadius - 14.0;
+    const b1Scale = 1.05;
+    placed.push({
+        species: 'banyan',
+        x: Math.sin(b1Angle) * b1R,
+        z: Math.cos(b1Angle) * b1R,
+        angle: rand() * Math.PI * 2,
+        seed: 701,
+        scale: b1Scale,
+        rReq: baseRadii.banyan * b1Scale
+    });
 
-        let bestX = 0, bestZ = 0, bestA = 0;
-        let found = false;
+    const b2Angle = b1Angle + Math.PI + (rand() - 0.5) * 0.35;
+    const b2R = maxRadius - 14.0;
+    const b2Scale = 1.05;
+    placed.push({
+        species: 'banyan',
+        x: Math.sin(b2Angle) * b2R,
+        z: Math.cos(b2Angle) * b2R,
+        angle: rand() * Math.PI * 2,
+        seed: 702,
+        scale: b2Scale,
+        rReq: baseRadii.banyan * b2Scale
+    });
 
-        for (let attempt = 0; attempt < 150; attempt++) {
-            const angle = rand() * Math.PI * 2;
-            const r = minR + rand() * (maxR - minR);
-            const x = Math.sin(angle) * r;
-            const z = Math.cos(angle) * r;
+    // 50 trees total: 2 grand banyans, 10 sacred peepals, 21 lush mangoes, 17 cooling neems
+    const toPlace = [];
+    for (let i = 0; i < 10; i++) toPlace.push('peepal');
+    for (let i = 0; i < 21; i++) toPlace.push('mango');
+    for (let i = 0; i < 17; i++) toPlace.push('neem');
 
-            let collision = false;
+    // Shuffle so diverse species naturally interleave across the grove
+    for (let i = toPlace.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        [toPlace[i], toPlace[j]] = [toPlace[j], toPlace[i]];
+    }
+
+    for (let i = 0; i < toPlace.length; i++) {
+        const species = toPlace[i];
+        let best = null;
+        let maxMinDist = -1;
+
+        // Best-candidate sampling: maximizes distance to nearest neighbor to eliminate clumping
+        for (let attempt = 0; attempt < 5000; attempt++) {
+            const u = rand();
+            const r = minCenterRadius + Math.sqrt(u) * (maxRadius - minCenterRadius);
+            const theta = rand() * Math.PI * 2;
+            const x = Math.sin(theta) * r;
+            const z = Math.cos(theta) * r;
+            const scale = 0.92 + rand() * 0.16;
+            const rReq = baseRadii[species] * scale;
+
+            let ok = true;
+            let closestDist = 999;
             for (const p of placed) {
-                if (Math.hypot(x - p.x, z - p.z) < minDistance) {
-                    collision = true;
+                const d = Math.hypot(x - p.x, z - p.z);
+                const req = rReq + p.rReq + 0.25;
+                if (d < req) {
+                    ok = false;
+                    break;
+                }
+                if (d < closestDist) closestDist = d;
+            }
+
+            if (ok) {
+                if (closestDist > maxMinDist) {
+                    maxMinDist = closestDist;
+                    best = {
+                        species,
+                        x,
+                        z,
+                        angle: rand() * Math.PI * 2,
+                        seed: 710 + i * 47,
+                        scale,
+                        rReq
+                    };
+                }
+                // High clearance candidate found: accept immediately
+                if (closestDist > (rReq + 4.0)) {
+                    best = {
+                        species,
+                        x,
+                        z,
+                        angle: rand() * Math.PI * 2,
+                        seed: 710 + i * 47,
+                        scale,
+                        rReq
+                    };
                     break;
                 }
             }
-
-            if (!collision) {
-                bestX = x;
-                bestZ = z;
-                bestA = angle;
-                found = true;
-                break;
-            }
         }
 
-        if (!found) {
-            const angle = (i * 2.39996) + rand() * 0.4;
-            const r = minR + rand() * (maxR - minR);
-            bestX = Math.sin(angle) * r;
-            bestZ = Math.cos(angle) * r;
-            bestA = angle;
+        if (best) {
+            placed.push(best);
         }
-
-        const scaleJitter = 0.94 + rand() * 0.20;
-        placed.push({
-            species,
-            x: bestX,
-            z: bestZ,
-            angle: bestA,
-            seed: 500 + i * 43,
-            scale: baseScale * scaleJitter
-        });
     }
 
     return placed;
