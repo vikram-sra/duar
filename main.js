@@ -11,7 +11,7 @@ import { loadManifest } from './src/portfolio/manifest.js';
 import { layoutPaintings, byYearNewestFirst, RING_SPACING } from './src/portfolio/layout.js';
 import {
     createTree, layoutForest, createForestFloor, createRoseCenterpiece, sharedForestGeometries,
-    getForestGroundTexture, updateForestWind, updateForestLighting,
+    getForestFloorTexture, FOREST_FLOOR_UV_SCALE, updateForestWind, updateForestLighting,
     forestWindUniforms, forestGroundUniforms, getForestElevation
 } from './src/portfolio/forest.js';
 import {
@@ -82,8 +82,14 @@ const C_HEMI_NIGHT = new THREE.Color(0x35455d);
 const C_HEMI_DAY = new THREE.Color(0xfcf2d4);
 const C_HEMI_GROUND_NIGHT = new THREE.Color(0x10151f);
 const C_HEMI_GROUND_DAY = new THREE.Color(0x241f18);
-const C_HEMI_FOREST_GROUND_NIGHT = new THREE.Color(0x081008);
-const C_HEMI_FOREST_GROUND_DAY = new THREE.Color(0x182814);
+// Earth bounce, desaturated to match the floor map. A saturated green here
+// tints every trunk and underside in the scene green from below.
+// Peak ambient breeze fed to the foliage wind shader. The drag-driven term adds
+// to this, so it is set for the resting state rather than the maximum.
+const AMBIENT_WIND_STRENGTH = 0.34;
+
+const C_HEMI_FOREST_GROUND_NIGHT = new THREE.Color(0x0a0d0a);
+const C_HEMI_FOREST_GROUND_DAY = new THREE.Color(0x232616);
 
 // Floor across the 24-hour cycle.
 const C_FLOOR_NOON = new THREE.Color(0x68645e);
@@ -92,15 +98,24 @@ const C_FLOOR_MIDNIGHT = new THREE.Color(0x0a1424);
 const C_FLOOR_DAWN = new THREE.Color(0x323034);
 
 // Plain deep organic meadow moss floor color across the day/night cycle
-const C_FLOOR_FOREST_NOON = new THREE.Color(0x1e3a16);
-const C_FLOOR_FOREST_TWILIGHT = new THREE.Color(0x142610);
-const C_FLOOR_FOREST_MIDNIGHT = new THREE.Color(0x0a1408);
-const C_FLOOR_FOREST_DAWN = new THREE.Color(0x24421a);
+// The floor is a photographed forest scan now, and this ramp multiplies it, so
+// it carries the light of the hour rather than a colour of its own. Anything
+// saturated here would tint a photograph and undo the reason for using one.
+const C_FLOOR_FOREST_NOON = new THREE.Color(0xe8e4d8);
+const C_FLOOR_FOREST_TWILIGHT = new THREE.Color(0x7d6f60);
+const C_FLOOR_FOREST_MIDNIGHT = new THREE.Color(0x141a26);
+const C_FLOOR_FOREST_DAWN = new THREE.Color(0xb8a488);
 
 // Floor ring ribbon. Door mode and paintings mode are the same geometry at different wave
 // amplitudes, which lets switchView morph between them instead of swapping buffers.
 // The resting speed of the sky: slow enough to read as atmosphere, not animation.
 const AMBIENT_DAY_SPEED = 0.025;
+// The grove is entered at a fixed hour rather than wherever the cycle happened
+// to be, so it always opens the same way. Math.PI/2 is noon -- the same value
+// the dock's Day button sets, so the two agree. Lower it toward ~PI*0.35 for a
+// raking mid-morning sun with longer shadows.
+const FOREST_ENTRY_SUN_ANGLE = Math.PI / 2;
+const FOREST_ENTRY_TWEEN = 2.2;   // seconds to ease there
 
 // Reused each frame for the forest's key-light direction; allocating a vector
 // per frame here is exactly the GC pressure the render loop cannot afford.
@@ -476,7 +491,14 @@ class DuarApp {
             pmremGenerator.compileEquirectangularShader();
             const envScene = new RoomEnvironment();
             this.scene.environment = pmremGenerator.fromScene(envScene).texture;
-            this.scene.environmentIntensity = 0.35;
+            // The env map is here for metal reflections, but at 0.35 it was also
+            // pouring diffuse irradiance into every shadowed leaf, trunk and
+            // blade -- lifting exactly the surfaces a shadow is supposed to
+            // darken, and by the same amount everywhere, which is what flattens
+            // contrast. Cut to a third; the four metallic materials that
+            // genuinely need it carry a matching envMapIntensity so their
+            // reflections are unchanged.
+            this.scene.environmentIntensity = 0.13;
             envScene.dispose();
             pmremGenerator.dispose();
         } catch (e) {
@@ -819,6 +841,10 @@ class DuarApp {
                 if (!door.isOpen) this.toggleDoor(door);
             }
         }, 'Discover');
+        this.randBtn = randBtn;
+        // Discover picks a random door or painting to jump to. The forest has
+        // neither, so the button is dead weight there.
+        randBtn.style.display = this.viewMode === 'forest' ? 'none' : 'inline-flex';
 
         const sunBtn = createBtn(icons.day, () => { }, 'Day');
         sunBtn.classList.add('day-btn');
@@ -903,6 +929,9 @@ class DuarApp {
             if (this.daySpeed < 0.02) this.daySpeed = 0.02;
             this.daySpeed = Math.min(0.65, this.daySpeed * 1.08);
         }, () => {
+            // Taking manual control cancels the grove's claim on the pause, so
+            // switching away later leaves the visitor's choice intact.
+            this._motionPausedByForest = false;
             this.setMotionPaused(!this.motionPaused);
         });
 
@@ -985,6 +1014,48 @@ class DuarApp {
     // Paintings billboard to face the camera, so their surface normal is simply the
     // direction back toward the viewer. That makes the rule the intuitive one: with
     // the sun behind you the work is lit, and facing into the sun it falls into shade.
+    // Ambient wind: a light breeze that lulls to nothing every so often and
+    // then picks back up. Real wind is not a constant, and a canopy that sways
+    // at a fixed rate forever is one of the things that reads as animation
+    // rather than weather.
+    //
+    // Two independent parts. `_windGate` is the slow on/off envelope -- it holds
+    // a state for a randomised stretch, then eases to the other one over several
+    // seconds, so the stop and the restart are both gradual. On top of that sit
+    // three detuned sines, which keep the strength wandering while it blows so
+    // that even a steady stretch never repeats exactly.
+    _updateWindEnvelope(dt) {
+        if (this._windGate === undefined) {
+            this._windGate = 1;        // current envelope, 0 = calm, 1 = breezy
+            this._windGateTarget = 1;
+            this._windHold = 30 + Math.random() * 30;
+        }
+
+        this._windHold -= dt;
+        if (this._windHold <= 0) {
+            const goingCalm = this._windGateTarget > 0.5;
+            this._windGateTarget = goingCalm ? 0 : 1;
+            // Breezy stretches run minutes, lulls run seconds. Cycling faster
+            // than this stops reading as weather and starts reading as a loop.
+            this._windHold = goingCalm ? (10 + Math.random() * 12) : (45 + Math.random() * 60);
+        }
+
+        // ~4 s to cross, framerate-independent. Slow enough that neither the
+        // drop nor the return registers as a switch being thrown.
+        const ease = 1 - Math.exp(-dt / 4.0);
+        this._windGate += (this._windGateTarget - this._windGate) * ease;
+
+        const t = this.time;
+        const gust = 0.62
+            + Math.sin(t * 0.23) * 0.20
+            + Math.sin(t * 0.61 + 1.7) * 0.12
+            + Math.sin(t * 1.13 + 4.2) * 0.06;
+
+        // Deliberately small. This is a breeze in the leaves, not weather; the
+        // drag-driven term still layers on top when the visitor spins the view.
+        this._windAmbient = AMBIENT_WIND_STRENGTH * this._windGate * Math.max(0, gust);
+    }
+
     updatePaintingLight(sky) {
         if (!this.doors.length) return;
 
@@ -992,7 +1063,10 @@ class DuarApp {
         _moonUnit.copy(sky.cel.moonPos).normalize();
 
         const sunUp = sky.sH;                       // 0 below the horizon, 1 overhead
-        const moonUp = (!(sky.sunAlt > 0.01)) ? sky.mH : 0;
+        // Weighted by the same twilight crossfade the key lights use, so the
+        // moon's contribution to the paintings rises as the sun's falls instead
+        // of appearing whole the instant the sun clears a threshold.
+        const moonUp = sky.mH * (1 - sky.sunW);
         // How strongly the sun casts, as opposed to how high it is. Scaling the key
         // light by altitude alone cancelled the effect at exactly the hours it should
         // be strongest: a low sun rakes hard across the work even though sH is small.
@@ -1122,6 +1196,11 @@ class DuarApp {
                 this.controls.autoRotateSpeed = ROTATE_SPEED_FOR[this.viewMode] ?? -0.8;
             }
         }
+
+        // startedAt is never cleared after a press, so a stray pointerleave much
+        // later can still be read as a long-press release. That release path sets
+        // daySpeed, so pin it here where the intent is unambiguous.
+        if (!this.motionPaused && this.daySpeed === 0) this.daySpeed = AMBIENT_DAY_SPEED;
 
         const btn = this.motionBtn;
         if (btn && this._motionIcons) {
@@ -1638,7 +1717,10 @@ class DuarApp {
             // hand off to a gentle orbit around the now-open portal and show the reticle.
             this.flyTo(targetCamPos, targetPoint, 1.9, () => {
                 this.controls.target.copy(targetPoint);
-                this.controls.autoRotate = true;
+                // Respect the pause. Forcing rotation on here restarted a scene
+                // the visitor had deliberately stopped -- and in the forest every
+                // tree is a door, so any tree click silently undid the button.
+                this.controls.autoRotate = !this.motionPaused;
                 this.controls.autoRotateSpeed = -0.25;
                 if (this.activeDoor === door) this._showReticle();
             });
@@ -1671,7 +1753,7 @@ class DuarApp {
             gsap.to(this.camera.position, { x: pullCamPos.x, y: pullCamPos.y, z: pullCamPos.z, duration: 1.8, ease: "power3.inOut" });
             gsap.to(this.controls.target, { x: doorPos.x, y: 1.78, z: doorPos.z, duration: 1.8, ease: "power3.inOut" });
 
-            this.controls.autoRotate = true;
+            this.controls.autoRotate = !this.motionPaused;   // same reason as above
             this.controls.autoRotateSpeed = -0.6; // Clockwise
 
             gsap.to(this.camera, {
@@ -1871,7 +1953,7 @@ class DuarApp {
         // surfaces by exactly the same amount, which is precisely what removes
         // contrast. Keep it barely present and let the hemisphere light, which
         // at least distinguishes sky from ground, do the filling.
-        const ambient = new THREE.AmbientLight(0xfff5ea, 0.015);
+        const ambient = new THREE.AmbientLight(0xfff5ea, 0.007);
         this.scene.add(ambient);
         this.hemiLight = new THREE.HemisphereLight(0xfff3d8, 0x221c16, 0.28);
         this.scene.add(this.hemiLight);
@@ -1896,7 +1978,7 @@ class DuarApp {
         this.sunLight.shadow.camera.updateProjectionMatrix();
         this.sunLight.shadow.bias = -0.0001;      // finer texels need less bias
         this.sunLight.shadow.normalBias = 0.018;
-        this.sunLight.shadow.radius = 1.2;       // and less blur to hide them
+        this.sunLight.shadow.radius = 0.9;       // and less blur to hide them
         this.scene.add(this.sunLight);
         this.scene.add(this.sunLight.target);
 
@@ -2169,6 +2251,29 @@ class DuarApp {
                 varying vec3 vGroundWorldPos;
             \n` + shader.fragmentShader;
 
+            // Detiled floor sampling.
+            //
+            // A photogrammetry scan is not a seamless tile, so repeating it across
+            // a 300 m disc would draw a visible grid. This samples it twice from
+            // world position -- the second copy rotated and offset -- and
+            // cross-fades between them on a mask far coarser than the tile, which
+            // breaks up the repeat without any seam of its own. Two samples, no
+            // extra geometry. UVs come from world XZ rather than the mesh's own,
+            // so the pattern stays put while the ground ripples during emergence.
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <map_fragment>',
+                `
+                #ifdef USE_MAP
+                    vec2 fp = vGroundWorldPos.xz * ${FOREST_FLOOR_UV_SCALE.toFixed(6)};
+                    vec2 uvA = fp;
+                    vec2 uvB = mat2(0.80, -0.60, 0.60, 0.80) * fp + vec2(0.37, 0.61);
+                    float fmask = smoothstep(-0.25, 0.25,
+                        sin(fp.x * 0.21 + 1.7) * sin(fp.y * 0.17 - 0.9));
+                    diffuseColor *= mix(texture2D(map, uvA), texture2D(map, uvB), fmask);
+                #endif
+                `
+            );
+
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <dithering_fragment>',
                 `
@@ -2183,11 +2288,22 @@ class DuarApp {
                     float edgeGlow = exp(-distToWave * distToWave * 0.015) * (1.0 - uForestWave * 0.7);
                     gl_FragColor.rgb += vec3(0.06, 0.12, 0.04) * edgeGlow * uForestActive;
 
-                    // Infinite horizon blend: outer boundary (115m - 149m) smoothly dissolves into fog
+                    // Infinite horizon blend.
+                    //
+                    // Mixing to fogColor alone cannot hide the rim: fogColor is a
+                    // single colour, while the sky's horizon is now warm toward
+                    // the sun and cool away from it, so on the anti-sun side the
+                    // matched edge met an unmatched sky and drew a line. Fading
+                    // alpha instead lets the actual sky through, which matches by
+                    // construction from every bearing. The colour mix is kept as
+                    // a first stage so the dissolve starts before the fade does.
                     #ifdef USE_FOG
-                    float edgeFog = smoothstep(115.0, 149.0, r);
+                    float edgeFog = smoothstep(70.0, 140.0, r);
                     gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, edgeFog);
                     #endif
+                    float edgeAlpha = 1.0 - smoothstep(105.0, 149.5, r);
+                    gl_FragColor.a *= edgeAlpha;
+                    if (gl_FragColor.a <= 0.002) discard;
                 } else {
                     // Natural planetary horizon illusion for gallery modes: solid ground for all paintings (r <= 112m), softly fades at perimeter
                     float edgeFade = 1.0 - smoothstep(112.0, 150.0, r);
@@ -2333,6 +2449,7 @@ class DuarApp {
     async switchView(mode, { keepCamera = false } = {}) {
         if (this._switching || mode === this.viewMode) return;
         this._switching = true;
+        const prevMode = this.viewMode;
         this.viewMode = mode;
 
         // Under keepCamera the switch must change the contents of the world and
@@ -2346,8 +2463,22 @@ class DuarApp {
             ? this.camera.position.distanceTo(this.controls.target)
             : null;
 
+        if (prevMode === 'forest' && mode !== 'forest') {
+            // Undo the grove's pause on the way out, but only if the grove is what
+            // set it. A visitor who pressed pause themselves stays paused --
+            // otherwise leaving the forest would silently override their choice.
+            gsap.killTweensOf(this, 'sunAngle');
+            if (this._motionPausedByForest) {
+                this._motionPausedByForest = false;
+                this.setMotionPaused(false);
+            }
+        }
+
         if (this.instaBtn) {
             this.instaBtn.style.display = mode === 'portfolio' ? 'inline-flex' : 'none';
+        }
+        if (this.randBtn) {
+            this.randBtn.style.display = mode === 'forest' ? 'none' : 'inline-flex';
         }
         if (this.updateDockModeBtn) {
             this.updateDockModeBtn();
@@ -2375,6 +2506,31 @@ class DuarApp {
                 .forEach((d) => requestTier(d, TIER.MID));
             gsap.to(this.bloomPass, { threshold: 0.92, strength: 0.20, duration: 0.6 });
         } else if (mode === 'forest') {
+            // The grove opens at a fixed daylight hour, held still, however the
+            // sky happened to be running in the view being left.
+            //
+            // Eased rather than snapped, and along the SHORT way round: the angle
+            // is cyclic, so a plain tween from late evening to noon would wind
+            // backwards through the whole night. Motion is paused first, which
+            // stops animate() advancing sunAngle, so the tween owns it outright
+            // and the two never fight over the same value.
+            if (!this.motionPaused) {
+                this._motionPausedByForest = true;
+                this.setMotionPaused(true);
+            }
+            const TWO_PI = Math.PI * 2;
+            const wrapped = (((FOREST_ENTRY_SUN_ANGLE - this.sunAngle) % TWO_PI) + TWO_PI) % TWO_PI;
+            const delta = wrapped > Math.PI ? wrapped - TWO_PI : wrapped;
+            gsap.killTweensOf(this, 'sunAngle');
+            if (Math.abs(delta) > 1e-3) {
+                gsap.to(this, {
+                    sunAngle: this.sunAngle + delta,
+                    duration: FOREST_ENTRY_TWEEN,
+                    ease: 'power2.inOut',
+                    overwrite: 'auto',
+                });
+            }
+
             // A default for the view, not an override -- setMotionPaused stays
             // the authority, so pressing play in the grove actually orbits.
             this.controls.autoRotate = !this.motionPaused;
@@ -2406,8 +2562,10 @@ class DuarApp {
         // floor still darkens into night with everything else.
         if (this.groundMat) {
             if (mode === 'forest') {
-                this.groundMat.map = null; // Plain green color, no texture
-                this.groundMat.transparent = false;
+                this.groundMat.map = getForestFloorTexture();
+                // Was false, which meant the rim alpha fade had no blending to
+                // act through and the disc ended on a hard edge.
+                this.groundMat.transparent = true;
                 this.groundMat.polygonOffset = false;
                 this.groundMat.roughness = 0.95;
                 this.groundMat.metalness = 0.0;
@@ -2440,7 +2598,11 @@ class DuarApp {
         // Atmospheric depth: deepen fog in forest mode so distant trees dissolve
         // into atmospheric mist, restored to 0.002 in geometric modes.
         if (this.scene.fog) {
-            const targetDensity = 0.002;
+            // This block's comment always said the forest gets deeper fog; the
+            // value did not. At 0.002 a tree at the 150 m rim is only 9% fogged,
+            // so the grove stayed crisp right up to the edge of the ground disc
+            // and the disc's boundary read as a hard line against the sky.
+            const targetDensity = mode === 'forest' ? 0.0075 : 0.002;
             gsap.to(this.scene.fog, { density: targetDensity, duration: 0.8 });
         }
 
@@ -2962,7 +3124,7 @@ class DuarApp {
     }
 
     createDoorFrame(group, data) {
-        const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5, metalness: 0.5 });
+        const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5, metalness: 0.5, envMapIntensity: 2.7 });
         // Extended posts: 3.6m tall, bottom sinks into ground
         const postGeo = new THREE.BoxGeometry(0.1, 3.6, 0.1);
 
@@ -3095,6 +3257,7 @@ class DuarApp {
             color: 0xffd043,
             metalness: 0.88,
             roughness: 0.18,
+            envMapIntensity: 2.7,   // see scene.environmentIntensity
             side: THREE.DoubleSide,
             depthWrite: true,
             depthTest: true,
@@ -3130,7 +3293,7 @@ class DuarApp {
             color: 0xffffff,
             metalness: 0.95,
             roughness: 0.10,
-            envMapIntensity: 1.0
+            envMapIntensity: 2.7   // 1.0 x 2.7, see scene.environmentIntensity
         });
         this.rock = new THREE.Mesh(geo, mat);
         this.rock.castShadow = true;
@@ -3279,28 +3442,35 @@ class DuarApp {
             this.sunMesh.material.opacity = sunFade;
             this.sunMesh.visible = sunFade > 0.001;
 
-            // True solar / lunar altitude checks
-            const isSunActive = sky.sunAlt > 0.005;
+            // Sun and moon crossfade over twilight rather than swapping at a
+            // threshold. The old code cut the sun from full intensity to zero and
+            // brought the moon up from zero in the same frame, so every shadow in
+            // the scene jumped to the opposite direction between one frame and the
+            // next. Both lights are live through the handover; each one's shadows
+            // fade with its own intensity, which is what dusk actually looks like.
+            const sunW = sky.sunW;
+            const moonW = 1 - sunW;
 
-            if (isSunActive) {
-                // Daytime: sunLight casts long, crisp, changing shadows across all trees
-                // Dynamic solar elevation modulation: low-angle golden dusk/dawn -> powerful midday sun
-                const sunElevationFactor = Math.sin(Math.max(0.05, sky.sunAlt));
-                const baseSun = this.viewMode === 'forest' ? 1.5 : 2.2;
-                const sunElevMult = this.viewMode === 'forest' ? 0.9 : 1.6;
-                this.sunLight.intensity = baseSun + (sunElevationFactor * sunElevMult);
-                this.sunLight.castShadow = true;
-                this.moonLight.intensity = 0;
-                this.moonLight.castShadow = false;
-            } else {
-                // Nighttime: moonlight is ALWAYS active and casts crisp, cool nocturnal shadows across everything!
-                this.sunLight.intensity = 0;
-                this.sunLight.castShadow = false;
-                this.moonLight.intensity = Math.max(1.5, sky.mH * 2.0);
-                this.moonLight.castShadow = true;
+            // Elevation shaping stays floored so a low sun still rakes hard, and
+            // the fade to nothing comes from sunW instead.
+            const sunElevationFactor = Math.sin(Math.max(0.05, sky.sunAlt));
+            const baseSun = this.viewMode === 'forest' ? 1.75 : 2.5;
+            const sunElevMult = this.viewMode === 'forest' ? 1.1 : 1.8;
+            this.sunLight.intensity = (baseSun + (sunElevationFactor * sunElevMult)) * sunW;
+            // The forest is meant to read as night; the gallery modes still need
+            // the moon to carry the scene, so only the forest is pulled down.
+            const moonBase = this.viewMode === 'forest' ? 0.6 : 1.5;
+            this.moonLight.intensity = Math.max(moonBase, sky.mH * moonBase * 1.33) * moonW;
 
-                // Ensure night shadow-casting light is well elevated (minimum altitude angle)
-                // so long, crisp shadows stretch across trees, rose, and terrain even if astronomical moon is low
+            // Below the cutoff a light contributes nothing visible, so drop its
+            // shadow pass rather than paying for a map nobody can see. Both are on
+            // only during the overlap, which is the point.
+            const sunCasts = sunW > 0.02;
+            const moonCasts = moonW > 0.02;
+
+            if (moonW > 0.001) {
+                // Keep the night key well elevated so long shadows stretch across
+                // trees, rose and terrain even when the astronomical moon is low.
                 const moonX = sky.cel.moonPos.x || 120;
                 const moonZ = sky.cel.moonPos.z || 120;
                 const elevY = Math.max(160, Math.abs(sky.cel.moonPos.y));
@@ -3309,7 +3479,16 @@ class DuarApp {
             }
 
             const sunAngleDelta = Math.abs(this.sunAngle - (this._lastShadowSunAngle || 0));
-            if (sunAngleDelta > 0.008) {
+            // A light that has just started casting has no shadow map yet, and with
+            // autoUpdate off it would render unshadowed until the angle gate next
+            // fires. Force the update on the frame the flag changes.
+            const castingChanged = sunCasts !== this._sunCasting || moonCasts !== this._moonCasting;
+            this.sunLight.castShadow = sunCasts;
+            this.moonLight.castShadow = moonCasts;
+            this._sunCasting = sunCasts;
+            this._moonCasting = moonCasts;
+
+            if (sunAngleDelta > 0.008 || castingChanged) {
                 this._lastShadowSunAngle = this.sunAngle;
                 this.renderer.shadowMap.needsUpdate = true;
             }
@@ -3394,8 +3573,8 @@ class DuarApp {
             // floor is left almost untouched -- at night the fill *is* the
             // lighting, and cutting it there just makes the scene unreadable.
             this.hemiLight.intensity = this.viewMode === 'forest'
-                ? 0.055 + (sky.sH * 0.07) + (sky.mH * 0.075)
-                : 0.06 + (sky.sH * 0.085) + (sky.mH * 0.11);
+                ? 0.028 + (sky.sH * 0.040) + (sky.mH * 0.04)
+                : 0.06 + (sky.sH * 0.050) + (sky.mH * 0.11);
             this.hemiLight.color.lerpColors(C_HEMI_NIGHT, C_HEMI_DAY, sky.sH);
             this.hemiLight.groundColor.lerpColors(hemiGroundNight, hemiGroundDay, sky.sH);
 
@@ -3470,6 +3649,8 @@ class DuarApp {
         this._forestDragMotion = THREE.MathUtils.lerp(this._forestDragMotion, targetForestMotion, lerpRate);
         if (this._forestDragMotion < 0.001) this._forestDragMotion = 0;
 
+        this._updateWindEnvelope(dt);
+
         if (this.roseCenterpiece && this.roseCenterpiece.visible) {
             this.roseCenterpiece.position.y = 0;
             this.roseCenterpiece.rotation.y = 0; // stem is locked; only the bloom sways
@@ -3487,16 +3668,26 @@ class DuarApp {
             }
         }
         if (this.viewMode === 'forest') {
-            updateForestWind(this.time * 24, this._forestDragMotion * 0.85);
+            updateForestWind(this.time * 24, this._windAmbient + this._forestDragMotion * 0.85);
 
             // Shade foliage against whichever light is actually dominant. Under
             // moonlight the split is deliberately weak -- a hard lit/unlit
             // terminator at night reads as daylight with the colour turned down.
-            const sunUp = this.sunLight.intensity > 0.01;
-            const key = sunUp ? this.sunLight : this.moonLight;
-            const strength = sunUp
-                ? THREE.MathUtils.clamp(this.sunLight.intensity / 2.0, 0, 1)
-                : THREE.MathUtils.clamp(this.moonLight.intensity / 1.4, 0, 1) * 0.55;
+            // The key has to be one light or the other: sun and moon sit on
+            // roughly opposite bearings, so averaging their directions collapses
+            // to zero length at the midpoint and the normalize blows up.
+            //
+            // So the direction switches -- but the *strength* is the difference
+            // between the two, which falls continuously to zero exactly where
+            // they are equal and rises again on the other side. The flip
+            // therefore happens at the one moment it cannot be seen, because
+            // there is no directional shading to flip. It is also what actually
+            // happens: two opposed lights of equal power leave no lit side.
+            const sunStrength = THREE.MathUtils.clamp(this.sunLight.intensity / 2.0, 0, 1);
+            const moonStrength = THREE.MathUtils.clamp(this.moonLight.intensity / 1.4, 0, 1) * 0.55;
+            const sunDominant = sunStrength >= moonStrength;
+            const key = sunDominant ? this.sunLight : this.moonLight;
+            const strength = Math.abs(sunStrength - moonStrength);
             _keyLightDir.copy(key.position).normalize();
             updateForestLighting(_keyLightDir, this.camera, strength);
         }

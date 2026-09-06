@@ -273,19 +273,34 @@ def main():
                     help='max GPU instances to retain per instanced mesh')
     ap.add_argument('--tex', type=int, default=1024,
                     help='max texture edge in pixels')
+    ap.add_argument('files', nargs='*',
+                    help='specific .glb files to process (any path). Without '
+                         'these, the built-in forest jobs run against public/models.')
     args = ap.parse_args()
 
-    if not MODELS.is_dir():
-        raise SystemExit('run from the repo root (public/models not found)')
-
-    jobs = [
-        ('neem_tree.glb', 'instances', 17),
-        ('red_rose.glb', 'textures', 1),
-    ]
+    if args.files:
+        # Any file, any location. Mode is chosen per file: thin GPU instances
+        # when the model has them, otherwise shrink textures.
+        jobs = []
+        for f in args.files:
+            fp = Path(f)
+            gltf, _ = read_glb(fp)
+            instanced = any(
+                'EXT_mesh_gpu_instancing' in n.get('extensions', {})
+                for n in gltf.get('nodes', [])
+            )
+            jobs.append((fp, 'instances' if instanced else 'textures', 1))
+    else:
+        if not MODELS.is_dir():
+            raise SystemExit('run from the repo root (public/models not found)')
+        jobs = [
+            (MODELS / 'neem_tree.glb', 'instances', 17),
+            (MODELS / 'red_rose.glb', 'textures', 1),
+        ]
 
     grand_before = grand_after = 0
-    for name, mode, copies in jobs:
-        path = MODELS / name
+    for path, mode, copies in jobs:
+        name = path.name
         if not path.exists():
             print(f'{name}: missing, skipped')
             continue
@@ -305,7 +320,7 @@ def main():
         after_tris, _ = scene_stats(gltf)
         after_vram = vram_mb(gltf, binary)
 
-        out = MODELS / (path.stem + '.opt.glb')
+        out = path.with_name(path.stem + '.opt.glb')
         if args.apply:
             write_glb(out, gltf, binary)
             after_size = out.stat().st_size

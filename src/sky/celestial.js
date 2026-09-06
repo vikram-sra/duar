@@ -268,6 +268,15 @@ export function createTorontoSkySystem(radius = 1800, isMobile = false) {
             // Night factor: 0 in daytime -> 1 at deep night
             const nightFactor = THREE.MathUtils.clamp((-sunAlt + 0.08) / 0.20, 0.0, 1.0);
 
+            // How much of the scene's key lighting the sun still owns, over the
+            // same altitude band the sky gradient uses. Consumers crossfade the
+            // sun and moon on this instead of testing sunAlt against a threshold:
+            // a boolean there snaps every shadow in the scene to the opposite
+            // direction in a single frame. Note it is NOT 1 - nightFactor --
+            // nightFactor drives colour and reaches 1 later, whereas the sun
+            // stops contributing light once it is properly down.
+            const sunW = THREE.MathUtils.smoothstep(sunAlt, -0.12, 0.08);
+
             // Update sky dome shader uniforms
             skyDomeMat.uniforms.uSunDir.value.copy(cel.sunPos).normalize();
             skyDomeMat.uniforms.uNightFactor.value = nightFactor;
@@ -286,6 +295,7 @@ export function createTorontoSkySystem(radius = 1800, isMobile = false) {
                 sunAlt,
                 sH,
                 mH,
+                sunW,
                 nightFactor
             };
         }

@@ -10,7 +10,7 @@
 // under an existing filename — and note that the runtime strategy below
 // revalidates in the background too, so a forgotten bump self-corrects on the
 // visitor's next load rather than never.
-const BUILD_ID = 'mtpxjo5e';
+const BUILD_ID = 'mtpzv2xd';
 const ASSET_VERSION = 'v2'; // v2: neem_tree.glb rebuilt in place (was 2.27M tris, now 217K)
 
 const SHELL = `duar-shell-${BUILD_ID}`;

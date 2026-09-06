@@ -49,7 +49,10 @@ export const forestWindUniforms = {
 export const forestLightUniforms = {
     uSunViewDir: { value: new THREE.Vector3(0, 1, 0) },
     uShadeAmount: { value: 1.0 },
-    uBacksideShade: { value: 0.38 }
+    // How dark the side facing away from the light goes. Lower is more
+    // contrast; at 0.38 the unlit half was only slightly dimmer than the lit
+    // half and the canopy read as evenly bright from every angle.
+    uBacksideShade: { value: 0.15 }
 };
 
 export const forestGroundUniforms = {
@@ -102,10 +105,118 @@ function applyFoliageSunShading(shader) {
         '#include <dithering_fragment>',
         `#include <dithering_fragment>
          float sunFacing = dot(normalize(vFoliageNormal), normalize(uSunViewDir));
-         // Wide, soft terminator: a hard step across a canopy of flat quads
-         // reads as faceted rather than as light falling through leaves.
-         float lit = smoothstep(-0.35, 0.45, sunFacing);
-         gl_FragColor.rgb *= mix(1.0, mix(uBacksideShade, 1.0, lit), uShadeAmount);`
+         // Two separate things, and they pull in opposite directions: the
+         // *transition* wants to be gentle, and the *ends* want to be far apart.
+         // Widened band plus a second smoothing pass gives a long, soft ramp
+         // with no visible edge across a canopy of flat quads, while the shaded
+         // end sits far darker than before -- so the tree has a clearly lit side
+         // and a clearly dark side without a seam between them.
+         float lit = smoothstep(-0.60, 0.55, sunFacing);
+         lit = lit * lit * (3.0 - 2.0 * lit);
+         // Shadow on foliage is skylit, so it is cooler than the key light as
+         // well as darker. Tinting it rather than only dimming it is what makes
+         // the contrast read as light and shade instead of as exposure.
+         vec3 shadeFactor = mix(uBacksideShade * vec3(0.84, 0.93, 1.16), vec3(1.0), lit);
+         gl_FragColor.rgb *= mix(vec3(1.0), shadeFactor, uShadeAmount);`
+    );
+}
+
+// Injects the wind displacement into an already-obtained shader object.
+//
+// `ampLocal` scales the displacement into the units the shader is deforming.
+// The only safe reference is **the deformed geometry's own size**, not the
+// model's overall height, because `transformed` is pre-instance: on a tree whose
+// leaf clusters are GPU-instanced, the geometry is a single small cluster that
+// instanceMatrix then scatters and scales across the whole canopy. Sizing the
+// amplitude off model height gets this catastrophically wrong -- neem's clusters
+// are ~3 units inside a model 2,074 units tall, so a model-derived amplitude
+// displaced every cluster by ~185% of itself and then let the instance scale
+// multiply that again, shredding the canopy into streaks.
+//
+// Scaling to the geometry's own size makes the instance scale cancel out: both
+// the cluster and its displacement are multiplied by it, so the sway stays a
+// fixed fraction of the leaf however the instance is scaled.
+//
+// `useHeightCompliance` anchors the bottom of the deformed geometry. It is right
+// for a mesh that spans the whole tree and wrong for an instanced leaf cluster,
+// where local Y says nothing about height up the trunk and the whole cluster
+// should move together.
+function injectFoliageWind(shader, flutterMult = 1.0, ampWave = 1.0, ampFlutter = 1.0, complianceExpr = null, speedMult = 1.0, branch = null) {
+    shader.uniforms.uWindTime = forestWindUniforms.uWindTime;
+    shader.uniforms.uWindStrength = forestWindUniforms.uWindStrength;
+    shader.uniforms.uWindScale = forestWindUniforms.uWindScale;
+
+    shader.vertexShader = `
+        uniform float uWindTime;
+        uniform float uWindStrength;
+        uniform float uWindScale;
+    ` + shader.vertexShader;
+
+    // Defaults to the procedural foliage's metre-scale expression. GLB callers
+    // pass one normalised to their own geometry, since exporter units vary.
+    const compliance = complianceExpr || 'clamp((transformed.y + 0.5) * 0.25, 0.0, 1.0)';
+
+    shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+
+        #ifdef USE_INSTANCING
+            vec4 wPos = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
+        #else
+            vec4 wPos = modelMatrix * vec4(transformed, 1.0);
+        #endif
+
+        // Spatial rolling wind wave across the forest.
+        //
+        // TIME BASE, because it is not what it looks like: uWindTime is
+        // this.time * 24, and this.time advances a flat 0.001 PER FRAME, not per
+        // second. At 60 fps that is 1.44 uWindTime units per second, so the
+        // coefficient below is in units of 1.44 rad/s -- 1.5 here is ~0.34 Hz, a
+        // ~3 s sway. Reading this as 24x real seconds puts every rate out by
+        // 16.7x, which is how the canopies once ended up on a 36-second period
+        // and looked completely static. (It also means the wind is frame-rate
+        // dependent; that predates this shader.)
+        float wavePhase = dot(wPos.xz, vec2(0.707, 0.707)) * uWindScale - uWindTime * ${(1.5 * speedMult).toFixed(4)};
+        float wave = sin(wavePhase) * 0.22 + sin(wavePhase * 2.2 + 1.1) * 0.09;
+
+        // Organic high-frequency leaf shimmer. Phase is taken from LOCAL position:
+        // world position varies by 3.2 radians per world unit here, which is a
+        // different flutter value at each corner of the same leaf and tears it.
+        float flutter = sin(uWindTime * ${(5.2 * flutterMult * Math.sqrt(speedMult)).toFixed(4)} + dot(transformed, vec3(3.2))) * 0.055;
+
+        // Branch-level motion: neighbouring parts of one canopy moving out of
+        // phase with each other.
+        //
+        // This is what was missing. Amplitude was never the problem -- the canopy
+        // was already displaced a third of a metre. But the wave's wavelength is
+        // 84 m, so across a single 20 m tree it is nearly constant and the whole
+        // canopy just slid back and forth as a rigid body, which the eye barely
+        // registers. Foliage reads as moving because of RELATIVE motion between
+        // its parts. The frequency here is set from the mesh's own size, so the
+        // phase turns over a few times across the canopy while staying almost
+        // constant across any one leaf -- variation between branches, none within
+        // a leaf, so nothing tears.
+        ${branch ? `
+        float branchPhase = dot(transformed, vec3(${branch.freq.toFixed(5)})) + uWindTime * ${branch.speed.toFixed(4)};
+        float branchWave = sin(branchPhase) * 0.5 + sin(branchPhase * 1.9 + 1.3) * 0.25;
+        ` : 'float branchWave = 0.0;'}
+
+        float heightCompliance = ${compliance};
+        // Wave and flutter are amplified separately. The wave is a function of
+        // world XZ at a long wavelength, so it is near-constant across one tree
+        // and moves the whole canopy together -- it can be pushed hard without
+        // distorting anything. Flutter varies per vertex, so pushing it pulls
+        // the corners of a single leaf apart; it stays small.
+        float waveAmp = uWindStrength * heightCompliance * ${ampWave.toFixed(4)};
+        float fltAmp  = uWindStrength * heightCompliance * ${ampFlutter.toFixed(4)};
+
+        float brAmp = uWindStrength * heightCompliance * ${(branch ? branch.amp : 0).toFixed(4)};
+
+        transformed.x += wave * 0.24 * waveAmp + flutter * fltAmp + branchWave * brAmp;
+        transformed.z += wave * 0.18 * waveAmp + flutter * fltAmp + branchWave * brAmp * 0.75;
+        transformed.y += abs(wave) * 0.05 * waveAmp - abs(branchWave) * brAmp * 0.20;
+        `
     );
 }
 
@@ -113,47 +224,90 @@ function applyFoliageWindShader(mat, flutterMult = 1.0) {
     if (!mat || mat._hasWindShader) return;
     mat._hasWindShader = true;
     mat.onBeforeCompile = (shader) => {
-        shader.uniforms.uWindTime = forestWindUniforms.uWindTime;
-        shader.uniforms.uWindStrength = forestWindUniforms.uWindStrength;
-        shader.uniforms.uWindScale = forestWindUniforms.uWindScale;
-
-        shader.vertexShader = `
-            uniform float uWindTime;
-            uniform float uWindStrength;
-            uniform float uWindScale;
-        ` + shader.vertexShader;
-
-        shader.vertexShader = shader.vertexShader.replace(
-            '#include <begin_vertex>',
-            `
-            #include <begin_vertex>
-
-            #ifdef USE_INSTANCING
-                vec4 wPos = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
-            #else
-                vec4 wPos = modelMatrix * vec4(transformed, 1.0);
-            #endif
-
-            // Spatial rolling wind wave across the forest
-            float wavePhase = dot(wPos.xz, vec2(0.707, 0.707)) * uWindScale - uWindTime * 1.5;
-            float wave = sin(wavePhase) * 0.22 + sin(wavePhase * 2.2 + 1.1) * 0.09;
-
-            // Organic high-frequency leaf shimmer
-            float flutter = sin(uWindTime * 5.2 * ${flutterMult.toFixed(2)} + dot(transformed, vec3(3.2))) * 0.055;
-
-            // Anchor trunk base firmly into the soil; canopy up high responds fully
-            float heightCompliance = clamp((transformed.y + 0.5) * 0.25, 0.0, 1.0);
-
-            transformed.x += (wave * 0.24 + flutter) * uWindStrength * heightCompliance;
-            transformed.z += (wave * 0.18 + flutter) * uWindStrength * heightCompliance;
-            transformed.y += abs(wave) * 0.05 * uWindStrength * heightCompliance;
-            `
-        );
-
+        injectFoliageWind(shader, flutterMult, 1.0, 1.0, null, 1.0, null);
         // A material gets exactly one onBeforeCompile, so the directional
         // shading is injected here rather than as a second hook.
         applyFoliageSunShading(shader);
     };
+}
+
+// Peak sway as a fraction of the deformed geometry's own size, at wind strength
+// 1.0, given separately for the two components.
+//
+// The reference size means different things in the two cases. For an instanced
+// leaf spray the geometry IS one small clump, so both components can be a tenth
+// of it. For a single mesh covering the entire canopy the reference is the whole
+// tree: the wave can still be a useful fraction of that, because it is smooth
+// and swings the canopy as one, but the flutter has to stay tiny or it tears
+// individual leaves apart. Sizing both from one number is why every tree except
+// neem sat visibly still -- a fraction small enough to keep flutter safe left
+// the wave at ~1% of a 20 m canopy, which is nothing.
+const WIND_WAVE_FRACTION_CLUSTER = 0.10;
+const WIND_FLUTTER_FRACTION_CLUSTER = 0.10;
+const WIND_WAVE_FRACTION_CANOPY = 0.055;
+const WIND_FLUTTER_FRACTION_CANOPY = 0.008;
+// Branch sway, as a fraction of canopy size, and how many times its phase turns
+// over across the mesh. Clusters do not need it -- each one is already an
+// independent object with its own instance position.
+// Cycles is a direct trade: more of them means more branch-to-branch variation
+// and more phase difference across each individual leaf, which stretches it.
+// 2.5 keeps the within-leaf stretch around 15% -- leaves do flex -- while still
+// giving several independently-moving regions per canopy.
+const WIND_BRANCH_FRACTION_CANOPY = 0.05;
+const WIND_BRANCH_CYCLES = 2.5;
+const WIND_BRANCH_PEAK = 0.75;
+const WIND_WAVE_COEFF = 0.31 * 0.24;
+const WIND_FLUTTER_COEFF = 0.055;
+
+// Wind for foliage inside a loaded GLB. Chains onto whatever hook the material
+// already has instead of replacing it.
+//
+// Amplitude is derived from `mesh.geometry`'s own bounding box, so it is correct
+// whether the mesh is a whole-tree canopy or a small instanced leaf cluster. A
+// mesh that spans the tree gets height compliance so its base stays put; an
+// instanced cluster does not, because it should move as one.
+export function applyGlbFoliageWind(mesh, flutterMult = 1.0) {
+    const mat = mesh && mesh.material;
+    if (!mat || mat._hasWindShader || !mesh.geometry) return;
+
+    mesh.geometry.computeBoundingBox();
+    const bb = mesh.geometry.boundingBox;
+    if (!bb) return;
+    const size = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z);
+    if (!(size > 0)) return;
+
+    const cluster = mesh.isInstancedMesh;
+    const waveFrac = cluster ? WIND_WAVE_FRACTION_CLUSTER : WIND_WAVE_FRACTION_CANOPY;
+    const fltFrac = cluster ? WIND_FLUTTER_FRACTION_CLUSTER : WIND_FLUTTER_FRACTION_CANOPY;
+    const ampWave = (waveFrac / WIND_WAVE_COEFF) * size;
+    const ampFlutter = (fltFrac / WIND_FLUTTER_COEFF) * size;
+
+    // An instanced cluster is one leaf spray repeated; it sways as a unit. A
+    // single mesh covering the whole canopy has to stay attached at the bottom,
+    // and the anchor is normalised to that mesh's own bounding box so it works
+    // whatever units the exporter used.
+    const h = bb.max.y - bb.min.y;
+    // The stock rates (~0.34 Hz sway, ~1.2 Hz rustle) already read correctly on
+    // both a clump and a canopy, so nothing is retimed here. See the TIME BASE
+    // note in injectFoliageWind before changing this.
+    const speedMult = 1.0;
+    const branch = cluster ? null : {
+        // 5 cycles across the mesh's own extent, whatever units it is in.
+        freq: (WIND_BRANCH_CYCLES * 2 * Math.PI) / (size * 3),
+        speed: 2.0,   // ~0.46 Hz at the real time base
+        amp: (WIND_BRANCH_FRACTION_CANOPY / WIND_BRANCH_PEAK) * size,
+    };
+    const complianceExpr = (cluster || !(h > 0))
+        ? '1.0'
+        : `clamp((transformed.y - (${bb.min.y.toFixed(4)})) / ${h.toFixed(4)}, 0.0, 1.0)`;
+
+    mat._hasWindShader = true;
+    const prior = mat.onBeforeCompile;
+    mat.onBeforeCompile = (shader, renderer) => {
+        if (prior) prior(shader, renderer);
+        injectFoliageWind(shader, flutterMult, ampWave, ampFlutter, complianceExpr, speedMult, branch);
+    };
+    mat.needsUpdate = true;
 }
 
 function applyGrassWindShader(mat) {
@@ -656,42 +810,92 @@ export function getForestGroundTexture() {
     const c = document.createElement('canvas'); c.width = S; c.height = S;
     const ctx = c.getContext('2d');
 
-    // Base rich vibrant botanical lawn green
-    ctx.fillStyle = '#3e7d22';
+    // Ground reads as ground because of what is NOT green in it. A meadow at any
+    // scale is olive and sage rather than pure hue-120, with bare soil, dry
+    // thatch and leaf litter breaking it up. A single saturated green -- however
+    // many shades of it -- reads as painted plastic, so this palette is built
+    // around desaturated greens plus real browns and straw.
+    ctx.fillStyle = '#59613b';
     ctx.fillRect(0, 0, S, S);
 
-    // Lush velvet moss, clover, and emerald undertones (100% vibrant green palette)
-    const greenTones = [
-        '#488f28', '#56a632', '#3a7520', '#63b838',
-        '#428224', '#32681a', '#5bb034', '#38701e',
-        '#6cc240', '#4e992b', '#366d1c', '#529e29'
-    ];
-    for (let i = 0; i < 500; i++) {
-        ctx.globalAlpha = 0.35 + Math.random() * 0.45;
-        ctx.fillStyle = greenTones[(Math.random() * greenTones.length) | 0];
-        ctx.beginPath();
-        ctx.ellipse(
-            Math.random() * S, Math.random() * S,
-            20 + Math.random() * 85, 14 + Math.random() * 60,
-            Math.random() * Math.PI, 0, Math.PI * 2
-        );
-        ctx.fill();
-    }
+    // The texture tiles 24x across the disc, so anything drawn near an edge has
+    // to appear on the opposite edge too or every tile boundary becomes a visible
+    // seam repeated across the whole floor.
+    const wrapped = (draw) => {
+        for (let ox = -1; ox <= 1; ox++) {
+            for (let oy = -1; oy <= 1; oy++) {
+                ctx.save();
+                ctx.translate(ox * S, oy * S);
+                draw();
+                ctx.restore();
+            }
+        }
+    };
 
-    // Micro botanical lawn stippling: fine green blade flecks for rich close-up grass texture
-    const bladeFlecks = ['#72c944', '#84dc54', '#5fb336', '#92e860', '#4e9b2a', '#7ad048', '#63ba34'];
-    for (let i = 0; i < 9000; i++) {
-        ctx.globalAlpha = 0.40 + Math.random() * 0.45;
-        ctx.fillStyle = bladeFlecks[(Math.random() * bladeFlecks.length) | 0];
+    const blob = (palette, count, rMin, rMax, aMin, aMax) => {
+        for (let i = 0; i < count; i++) {
+            const x = Math.random() * S, y = Math.random() * S;
+            const rx = rMin + Math.random() * (rMax - rMin);
+            const ry = rx * (0.55 + Math.random() * 0.6);
+            const rot = Math.random() * Math.PI;
+            const fill = palette[(Math.random() * palette.length) | 0];
+            const alpha = aMin + Math.random() * (aMax - aMin);
+            wrapped(() => {
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = fill;
+                ctx.beginPath();
+                ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+    };
+
+    // Low-frequency tonal drift first, so later detail sits inside patches of
+    // damp and dry rather than on a uniform field.
+    blob(['#4d5433', '#626a44', '#545c39', '#6b7049'], 14, 110, 240, 0.20, 0.38);
+
+    // Mid-scale vegetation: sage, olive, a little moss. Still no saturated green.
+    blob(['#5f6a3d', '#4a5230', '#6c7546', '#535c35', '#707a4d', '#455028'], 240, 22, 90, 0.22, 0.42);
+
+    // Bare earth and worn tracks showing through the sward. This is the part that
+    // does most of the work -- ground with no soil in it never looks like ground.
+    blob(['#6a5638', '#7a6644', '#5b4a30', '#816e4c', '#4f4029'], 90, 18, 72, 0.20, 0.40);
+
+    // Sun-bleached thatch and dry stems.
+    blob(['#8a8155', '#948a5f', '#7d7449'], 55, 14, 55, 0.14, 0.30);
+
+    // Fine detail: blades, grit and leaf litter, mixed light and dark so the
+    // surface has grain at close range instead of flat colour under the grass.
+    const flecks = [
+        '#6f7a46', '#7d8850', '#5a6338', '#8e8a5c', '#9a9468',
+        '#4a4229', '#3a3a22', '#6b5940', '#877446', '#616a3c'
+    ];
+    for (let i = 0; i < 11000; i++) {
+        ctx.globalAlpha = 0.30 + Math.random() * 0.40;
+        ctx.fillStyle = flecks[(Math.random() * flecks.length) | 0];
         const x = Math.random() * S, y = Math.random() * S;
         ctx.fillRect(x, y, 1 + Math.random() * 3, 2 + Math.random() * 5);
+    }
+
+    // A few darker specks of litter and stone for depth at close range.
+    for (let i = 0; i < 1400; i++) {
+        ctx.globalAlpha = 0.20 + Math.random() * 0.35;
+        ctx.fillStyle = Math.random() < 0.5 ? '#332d1d' : '#463c26';
+        const x = Math.random() * S, y = Math.random() * S;
+        const r = 1 + Math.random() * 2.5;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
     }
     ctx.globalAlpha = 1;
 
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(32, 32);
+    // 24 rather than 32: now that the map is actually applied, a tighter repeat
+    // makes the tiling pattern itself readable across the open floor.
+    tex.repeat.set(24, 24);
+    tex.anisotropy = 8;
     tex.colorSpace = THREE.SRGBColorSpace;
     _forestGroundTexture = tex;
     return tex;
@@ -961,8 +1165,12 @@ function buildCanopy(speciesKey, preset, twigs, boughs, rand, pivot) {
         side: THREE.DoubleSide,
         alphaTest: 0.40,
         vertexColors: true,
-        emissive: leafBase.clone().multiplyScalar(0.24),
-        emissiveIntensity: 0.95,
+        // Emissive is added before the directional shade multiplies the fragment,
+        // so a strong term here puts a floor under the dark side of every leaf
+        // and directly cancels the lit/unlit contrast. Kept as a faint lift for
+        // night legibility only.
+        emissive: leafBase.clone().multiplyScalar(0.07),
+        emissiveIntensity: 0.5,
     });
     mat.shadowSide = THREE.DoubleSide;
     applyFoliageWindShader(mat, preset.flutterMult || 1.0);
@@ -1135,7 +1343,7 @@ export function preloadForestGLBs(onComplete) {
         { key: 'peepal', url: getAssetUrl('models/bodhi_tree.glb'), targetHeight: 20.0, groundSink: 2.15 },
         { key: 'mango', url: getAssetUrl('models/mango_tree_2.glb'), targetHeight: 16.0, groundSink: 0.08 },
         { key: 'neem', url: getAssetUrl('models/neem_tree.glb'), targetHeight: 16.0, groundSink: 2.15 },
-        { key: 'rose', url: getAssetUrl('models/red_rose.glb'), targetHeight: 1.45, groundSink: 0.0 }
+        { key: 'rose', url: getAssetUrl('models/red_rose_1k.glb'), targetHeight: 1.45, groundSink: 0.0 }
     ];
 
     const promises = specs.map(spec => new Promise((resolve) => {
@@ -1149,7 +1357,11 @@ export function preloadForestGLBs(onComplete) {
                 const center = box.getCenter(new THREE.Vector3());
                 const size = box.getSize(new THREE.Vector3());
 
-                const scaleFactor = spec.targetHeight / Math.max(size.y, 0.001);
+                // A floor is sized by how much ground it covers; everything else
+                // by how tall it stands.
+                const scaleFactor = spec.targetSpan
+                    ? spec.targetSpan / Math.max(Math.min(size.x, size.z), 0.001)
+                    : spec.targetHeight / Math.max(size.y, 0.001);
                 const sinkOffset = (spec.groundSink || 0) / scaleFactor;
                 model.position.set(-center.x, -box.min.y - sinkOffset, -center.z);
 
@@ -1157,6 +1369,10 @@ export function preloadForestGLBs(onComplete) {
                 wrapper.name = `GLB_Wrapper_${spec.key}`;
                 wrapper.add(model);
                 wrapper.scale.setScalar(scaleFactor);
+                if (spec.flattenY) {
+                    // Squash the scan's relief without touching its footprint.
+                    wrapper.scale.y = scaleFactor * spec.flattenY;
+                }
 
                 model.traverse((child) => {
                     if (child.isMesh) {
@@ -1221,6 +1437,23 @@ export function preloadForestGLBs(onComplete) {
                                 child.customDepthMaterial.side = THREE.DoubleSide;
                             } else {
                                 child.receiveShadow = true;
+                            }
+
+                            // Wind, for the canopy only.
+                            //
+                            // isFoliageMat is NOT a safe gate here. It exists for
+                            // alpha-cutout handling and matches on material names
+                            // like 'Material.001', which on neem is the trunk --
+                            // harmless for a depth material, wrong for a
+                            // displacement hook. So require a leaf-ish mesh name
+                            // and explicitly reject trunk-ish ones; anything
+                            // unrecognised gets no wind, which is the safe way to
+                            // be wrong.
+                            const meshLabel = `${child.name || ''} ${child.material.name || ''}`;
+                            const trunkLike = /trunk|bark|wood|log|stem|branch/i.test(meshLabel);
+                            const leafLike = /leaf|leaves|foliage|twig|frond|canopy|vine|blossom|flower|bright|dark|front/i.test(meshLabel);
+                            if (isFoliageMat && leafLike && !trunkLike) {
+                                applyGlbFoliageWind(child, 1.0);
                             }
 
                             // Directional shading for anything drawn DoubleSide, which
@@ -1374,18 +1607,27 @@ export function createTree(speciesKey, { seed = 1, scale = 1 } = {}) {
 // ---------------------------------------------------------------------------
 
 function createGrassField(rand, innerR, outerR, count) {
-    const green = new THREE.Color(0x3e8022);     // Vibrant emerald green
-    const lightGreen = new THREE.Color(0x5ca832);// Sun-dappled lime green
-    const deepGreen = new THREE.Color(0x245214); // Deep velvety moss green
+    // Meadow greens are olive and sage, not emerald. Real blades also vary well
+    // beyond green -- sun-bleached straw at the tips, brown at the base of a
+    // clump -- and that spread is most of what separates grass from carpet.
+    const green = new THREE.Color(0x556b30);     // Base olive sward
+    const lightGreen = new THREE.Color(0x7d8a4c);// Sun-lifted sage
+    const deepGreen = new THREE.Color(0x33421f); // Shaded moss, cool and dark
+    const strawGreen = new THREE.Color(0x8d8452);// Dry thatch
+    const earthGreen = new THREE.Color(0x5f5334);// Withering, near the soil
 
     const mat = new THREE.MeshStandardMaterial({
         color: 0xffffff,
-        roughness: 0.65,
+        roughness: 0.88,
         metalness: 0.0,
         side: THREE.DoubleSide,
         vertexColors: true,
-        emissive: green.clone().multiplyScalar(0.26),
-        emissiveIntensity: 0.95,
+        // Emissive on grass is a cheat for night readability, and at 0.26/0.95 it
+        // was strong enough to glow through daylight and flatten every shadow the
+        // blades should have taken. Kept only as a faint desaturated floor, so the
+        // meadow stays legible after dark without lighting itself.
+        emissive: new THREE.Color(0x3f4a2b).multiplyScalar(0.10),
+        emissiveIntensity: 0.45,
     });
 
     mat.shadowSide = THREE.DoubleSide;
@@ -1416,12 +1658,18 @@ function createGrassField(rand, innerR, outerR, count) {
         m.compose(p, q, s);
         inst.setMatrixAt(i, m);
 
-        // 100% lush botanical greens - zero straw or brown
+        // A minority of dry and withered blades. They read as almost nothing
+        // individually and as the difference between a meadow and a billiard
+        // table in aggregate, so the straw/earth share is deliberate.
         const roll = rand();
-        if (roll < 0.35) _color.copy(green).lerp(lightGreen, rand() * 0.85);
-        else if (roll < 0.70) _color.copy(green).lerp(deepGreen, rand() * 0.65);
+        if (roll < 0.30) _color.copy(green).lerp(lightGreen, rand() * 0.85);
+        else if (roll < 0.58) _color.copy(green).lerp(deepGreen, rand() * 0.70);
+        else if (roll < 0.74) _color.copy(green).lerp(strawGreen, 0.35 + rand() * 0.55);
+        else if (roll < 0.84) _color.copy(green).lerp(earthGreen, 0.30 + rand() * 0.50);
         else _color.copy(green);
-        _color.offsetHSL((rand() - 0.5) * 0.03, 0.05, (rand() - 0.5) * 0.08);
+        // Widened hue jitter and a slight desaturation: a single hue repeated
+        // across thousands of instances is what makes a field look printed.
+        _color.offsetHSL((rand() - 0.5) * 0.07, -0.04 + (rand() - 0.5) * 0.05, (rand() - 0.5) * 0.11);
         inst.setColorAt(i, _color);
     }
 
@@ -1436,6 +1684,32 @@ export function createForestFloor(seed = 5000) {
     const shrubs = [];
     return { grass, shrubs };
 }
+
+// The forest floor's colour, lifted from a photogrammetry scan.
+//
+// This replaces the scan MESH. Laying the scan down as geometry gave a 4 m
+// island with its own boundary in the middle of the clearing -- the scan's crop
+// edge is part of the model, so there is no radius at which it stops looking
+// like a cut-out. As a tiled texture on the ground that already exists it costs
+// no triangles at all, covers the entire disc, and cannot have an edge.
+let _forestFloorTexture = null;
+export function getForestFloorTexture() {
+    if (_forestFloorTexture) return _forestFloorTexture;
+    const tex = new THREE.TextureLoader().load(getAssetUrl('textures/forest_floor.jpg'));
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    // The shader below builds its own UVs from world position, so repeat is left
+    // at 1 and the scale lives in FOREST_FLOOR_UV_SCALE.
+    _forestFloorTexture = tex;
+    return tex;
+}
+
+// The baked tile (scripts/bake-floor-texture.py) covers 2.16 m of real ground --
+// it is the largest fully covered square the scan could yield. Keep this in step
+// with the script's reported TILE SPAN or the litter comes out the wrong size.
+export const FOREST_FLOOR_UV_SCALE = 1 / 2.16;
 
 // ---------------------------------------------------------------------------
 // 8. Museum-Grade Ultra-Realistic Fibonacci Sacred Rose
@@ -1572,7 +1846,7 @@ function createPhotorealisticRoseBloom(rand) {
 }
 
 // ---------------------------------------------------------------------------
-// 8. 3D Rose Centerpiece (red_rose.glb)
+// 8. 3D Rose Centerpiece (red_rose_1k.glb)
 // ---------------------------------------------------------------------------
 
 export function createRoseCenterpiece(seed = 4242) {
