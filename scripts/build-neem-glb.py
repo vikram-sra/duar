@@ -245,15 +245,13 @@ def decompose(m):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--write', action='store_true')
-    ap.add_argument('--clusters', type=int, default=230,
+    ap.add_argument('--clusters', type=int, default=1000,
                     help='leaf clusters kept out of the source 1,000')
-    ap.add_argument('--leaf-keep', type=float, default=0.26,
+    ap.add_argument('--leaf-keep', type=float, default=0.35,
                     help='fraction of leaves kept within each cluster')
-    ap.add_argument('--leaf-grow', type=float, default=1.4,
-                    help='scale applied to surviving leaves. 1.4 takes a 3cm '
-                         'leaflet to ~4cm, still well inside a real neem\'s '
-                         '3-8cm range. Coverage-preserving scale would be 2.8x, '
-                         'which is where leaves stop reading as leaves.')
+    ap.add_argument('--leaf-grow', type=float, default=1.45,
+                    help='scale applied to surviving leaves. 1.45 gives lush coverage '
+                         'while keeping leaflet size natural.')
     ap.add_argument('--out', default=str(OUT))
     args = ap.parse_args()
 
@@ -368,13 +366,19 @@ def main():
     for label in ('twig', 'dark', 'bright'):
         p = parts[label]
         src_pbr = p['mat'].get('pbrMetallicRoughness', {})
+        color_map = {
+            'twig': [0.18, 0.12, 0.08, 1.0],
+            'dark': [0.10, 0.28, 0.065, 1.0],
+            'bright': [0.24, 0.52, 0.12, 1.0]
+        }
+        base_color = color_map.get(label, src_pbr.get('baseColorFactor', [1, 1, 1, 1]))
         out['materials'].append({
             'name': {'twig': 'Material.004', 'dark': 'Material.002',
                      'bright': 'Material.003'}[label],
             'pbrMetallicRoughness': {
-                'baseColorFactor': src_pbr.get('baseColorFactor', [1, 1, 1, 1]),
+                'baseColorFactor': base_color,
                 'metallicFactor': 0.0,
-                'roughnessFactor': src_pbr.get('roughnessFactor', 0.9),
+                'roughnessFactor': 0.75 if label != 'twig' else 0.95,
             },
             'doubleSided': True,
         })

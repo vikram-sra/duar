@@ -183,11 +183,11 @@ const CONFIG = {
         "camera": { "fov": 50, "startPosition": [0, 3.0, 28.5] }
     },
     "doors": [
-        { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: "/models/door_rustic.glb", position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
-        { id: "blog", label: "BLOG", type: "scifi_portal", modelPath: "/models/door_scifi.glb", position: [-5, 0, -9], rotation: [0, 0.2, 0], destinationUrl: "/blog", animation: "slideUp", color: 0x88ccff, particles: "tech" },
-        { id: "projects", label: "PROJECTS", type: "iron_gate", modelPath: "/models/gate_iron.glb", position: [0, 0, -10], rotation: [0, 0, 0], destinationUrl: "https://waveism.duar.one", animation: "swingBoth", color: 0xffeeaa, particles: "sparks" },
-        { id: "contact", label: "CONTACT", type: "stone_arch", modelPath: "/models/arch_stone.glb", position: [5, 0, -9], rotation: [0, -0.2, 0], destinationUrl: "/about/", animation: "dissolveField", color: 0xcc88ff, particles: "runes" },
-        { id: "about", label: "ABOUT", type: "shoji_screen", modelPath: "/models/door_shoji.glb", position: [10, 0, -6], rotation: [0, -0.4, 0], destinationUrl: "/about/", animation: "slideRight", color: 0xff88aa, particles: "petals" }
+        { id: "portfolio", label: "PORTFOLIO", type: "rustic_wood", modelPath: null, position: [-10, 0, -6], rotation: [0, 0.4, 0], destinationUrl: "", animation: "creakOpen", color: 0xffaa88, particles: "leaves" },
+        { id: "blog", label: "BLOG", type: "scifi_portal", modelPath: null, position: [-5, 0, -9], rotation: [0, 0.2, 0], destinationUrl: "/blog", animation: "slideUp", color: 0x88ccff, particles: "tech" },
+        { id: "projects", label: "PROJECTS", type: "iron_gate", modelPath: null, position: [0, 0, -10], rotation: [0, 0, 0], destinationUrl: "https://waveism.duar.one", animation: "swingBoth", color: 0xffeeaa, particles: "sparks" },
+        { id: "contact", label: "CONTACT", type: "stone_arch", modelPath: null, position: [5, 0, -9], rotation: [0, -0.2, 0], destinationUrl: "/about/", animation: "dissolveField", color: 0xcc88ff, particles: "runes" },
+        { id: "about", label: "ABOUT", type: "shoji_screen", modelPath: null, position: [10, 0, -6], rotation: [0, -0.4, 0], destinationUrl: "/about/", animation: "slideRight", color: 0xff88aa, particles: "petals" }
     ],
     "paths": [
         { id: "main_path", texture: "/textures/stone_path_diffuse.png", points: [] }
@@ -206,6 +206,7 @@ class DuarApp {
         this.daySpeed = 0.08;
         this.motionPaused = true;    // held for the opening shot's static beat; released once it starts descending
         this.isTraveling = false;
+        this.isFlying = false;
         this.activeDoor = null;  // The currently open door, target for reticle
         this._orbitRadius = null; // When set, render loop enforces this distance from controls.target
         this.hoveredDoor = null;  // Door currently under the cursor (drives label display)
@@ -330,8 +331,8 @@ class DuarApp {
             back.classList.add('visible');
         }
         gsap.fromTo(reticle,
-            { opacity: 0, scale: 0 },
-            { opacity: 1, scale: 1, duration: 0.5, ease: 'back.out(1.7)', overwrite: true }
+            { opacity: 0, scale: 0.85 },
+            { opacity: 1, scale: 1, duration: 0.4, ease: 'power2.out', overwrite: true }
         );
 
         // Show persistent title pill at the top in focus mode
@@ -379,7 +380,7 @@ class DuarApp {
         }
 
         gsap.to(reticle, {
-            opacity: 0, scale: 0, duration: 0.3, ease: 'power2.in', overwrite: true,
+            opacity: 0, scale: 0.85, duration: 0.3, ease: 'power2.in', overwrite: true,
             onComplete: () => reticle.classList.remove('visible', 'art-mode')
         });
     }
@@ -1314,7 +1315,7 @@ class DuarApp {
     }
 
     onClick(event) {
-        if (this.isTraveling) return;
+        if (this.isTraveling || this.isFlying) return;
         try {
             this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -1325,11 +1326,6 @@ class DuarApp {
             let interactedWithObject = false;
 
             if (hits.length > 0) {
-                // Whichever object stands at the centre of the current view: the
-                // cone, the sculpture, or the rose. Clicking the centre means
-                // "change worlds" in every view. The rose used to be excluded here
-                // and routed to a focus instead, so the same gesture did two
-                // different things depending on which world you were standing in.
                 const isCenterObj = (obj) => {
                     const centre = CENTREPIECE_FOR(this)[this.viewMode];
                     if (!centre) return false;
@@ -1355,12 +1351,8 @@ class DuarApp {
                 if (hit) {
                     interactedWithObject = true;
                     if (isCenterObj(hit.object)) {
-                        // Cycles doors -> paintings -> forest -> doors, from wherever
-                        // the visitor is standing. Motion is deliberately left alone:
-                        // this used to force a pause on every switch, so the play
-                        // button had to be pressed again after each one.
-                        // switchView() repaints the dock and top-right buttons itself.
                         if (!this._switching) {
+                            if (this.activeDoor) this._hideReticle();
                             this.switchView(nextViewMode(this.viewMode), { keepCamera: true });
                         }
                         return;
@@ -1376,6 +1368,11 @@ class DuarApp {
                     }
 
                     if (door) {
+                        // If moving from one active object to another, gently dismiss the existing pill/reticle
+                        if (this.activeDoor && this.activeDoor !== door) {
+                            this._hideReticle();
+                        }
+
                         if (door.isTree) {
                             if (!door.isGrass && !door.isShrub) {
                                 if (this.activeDoor === door && !this.isTraveling) {
@@ -1393,9 +1390,6 @@ class DuarApp {
                                 this.focusPainting(door);
                             }
                         } else if (door.isOpen) {
-                            // Clicking inside an already-open door is an attempt to go
-                            // through it, so it refuses like the Enter dot does. The cross
-                            // is the only way back out. A different, closed door opens.
                             this._refuseEntry();
                         } else {
                             this.toggleDoor(door);
@@ -1409,7 +1403,7 @@ class DuarApp {
                 const popup = document.getElementById('painting-popup');
                 if (popup && popup.classList.contains('open')) {
                     popup.classList.remove('open');
-                } else if (this.activeDoor && (this.activeDoor.isTree || this.activeDoor.isRose || this.activeDoor.isFlora || this.activeDoor.isPainting)) {
+                } else if (this.activeDoor && (this.activeDoor.isTree || this.activeDoor.isRose || this.activeDoor.isFlora || this.activeDoor.isPainting || this.activeDoor.isOpen)) {
                     this.resetScene();
                 } else {
                     this.setUIVisibility(!this.uiVisible);
@@ -1620,8 +1614,8 @@ class DuarApp {
                     isFlora: true,
                     title: 'Duar 3.0',
                     name: 'Duar 3.0',
-                    meta: 'Rosa damascena · Living Centerpiece',
-                    description: 'A flourishing velvety ruby rose resting peacefully at the sanctuary center.'
+                    meta: 'Floribunda Roses · Living Centerpiece',
+                    description: 'A flourishing sacred bush of velvety ruby red roses resting peacefully at the sanctuary center.'
                 };
                 this.roseCenterpiece.traverse(o => {
                     if (o.isMesh && o.name !== 'ContactShadow') {
@@ -1750,14 +1744,13 @@ class DuarApp {
             const pullCamPos = doorPos.clone().addScaledVector(pullDir, 8.0);
             pullCamPos.y = 2.8;
 
-            gsap.to(this.camera.position, { x: pullCamPos.x, y: pullCamPos.y, z: pullCamPos.z, duration: 1.8, ease: "power3.inOut" });
-            gsap.to(this.controls.target, { x: doorPos.x, y: 1.78, z: doorPos.z, duration: 1.8, ease: "power3.inOut" });
-
-            this.controls.autoRotate = !this.motionPaused;   // same reason as above
-            this.controls.autoRotateSpeed = -0.6; // Clockwise
+            this.flyTo(pullCamPos, new THREE.Vector3(doorPos.x, 1.78, doorPos.z), 1.8, () => {
+                this.controls.autoRotate = !this.motionPaused;
+                this.controls.autoRotateSpeed = -0.6; // Clockwise
+            });
 
             gsap.to(this.camera, {
-                fov: this._fovForAspect(this.camera.aspect), duration: 1.8, ease: "power3.inOut",
+                fov: this._fovForAspect(this.camera.aspect), duration: 1.8, ease: "power2.inOut",
                 onUpdate: () => this.camera.updateProjectionMatrix()
             });
 
@@ -1780,20 +1773,55 @@ class DuarApp {
 
     // Smoothly fly the camera THROUGH space to `camPos` while aiming at `lookAt`.
     flyTo(camPos, lookAt, duration = 1.9, onArrive = null) {
+        this.isFlying = true;
+        this.controls.enabled = false;
         this.controls.autoRotate = false;
         this.controls.enableDamping = false;
         gsap.killTweensOf(this.camera.position);
         gsap.killTweensOf(this.controls.target);
-        gsap.to(this.camera.position, {
-            x: camPos.x, y: camPos.y, z: camPos.z,
-            duration, ease: "power3.inOut", overwrite: true
-        });
+
+        // Calculate a gentle elevation arc if terrain rises between start and end
+        const startPos = this.camera.position.clone();
+        let peakY = Math.max(startPos.y, camPos.y);
+        if (this.viewMode === 'forest') {
+            for (let i = 1; i < 8; i++) {
+                const frac = i / 8;
+                const sx = startPos.x * (1 - frac) + camPos.x * frac;
+                const sz = startPos.z * (1 - frac) + camPos.z * frac;
+                const gY = getForestElevation(sx, sz);
+                if (gY + 1.2 > peakY) peakY = gY + 1.2;
+            }
+        }
+        const needsArc = peakY > Math.max(startPos.y, camPos.y) + 0.15;
+
+        if (needsArc) {
+            gsap.to(this.camera.position, {
+                x: camPos.x, z: camPos.z,
+                duration, ease: "power2.inOut", overwrite: true
+            });
+            gsap.to(this.camera.position, {
+                y: peakY, duration: duration * 0.45, ease: "sine.out",
+                onComplete: () => {
+                    gsap.to(this.camera.position, {
+                        y: camPos.y, duration: duration * 0.55, ease: "sine.inOut"
+                    });
+                }
+            });
+        } else {
+            gsap.to(this.camera.position, {
+                x: camPos.x, y: camPos.y, z: camPos.z,
+                duration, ease: "power2.inOut", overwrite: true
+            });
+        }
+
         gsap.to(this.controls.target, {
             x: lookAt.x, y: lookAt.y, z: lookAt.z,
-            duration, ease: "power3.inOut", overwrite: true,
+            duration, ease: "power2.inOut", overwrite: true,
             onComplete: () => {
                 this.controls.target.copy(lookAt);
+                this.controls.enabled = true;
                 this.controls.enableDamping = true;
+                this.isFlying = false;
                 if (onArrive) onArrive();
             }
         });
@@ -1863,9 +1891,19 @@ class DuarApp {
 
         this.closeAllDoors();
 
-        // Restore all hidden trees on exiting full view
+        // Restore all hidden trees on exiting full view smoothly
         if (this._occludedTrees && this._occludedTrees.size > 0) {
-            this._occludedTrees.forEach(d => { if (d.group) d.group.visible = true; });
+            this._occludedTrees.forEach(d => {
+                if (d.group) {
+                    d.group.visible = true;
+                    const targetScale = d.scale || 1.0;
+                    gsap.killTweensOf(d.group.scale);
+                    gsap.to(d.group.scale, {
+                        x: targetScale, y: targetScale, z: targetScale,
+                        duration: 0.5, ease: 'power2.out'
+                    });
+                }
+            });
             this._occludedTrees.clear();
         }
 
@@ -2249,27 +2287,77 @@ class DuarApp {
                 uniform float uForestWave;
                 uniform float uForestActive;
                 varying vec3 vGroundWorldPos;
+
+                // Fast organic 2D procedural noise for natural terrain texturing
+                float groundHash(vec2 p) {
+                    vec2 q = fract(p * vec2(123.34, 456.21));
+                    q += dot(q, q + 45.32);
+                    return fract(q.x * q.y);
+                }
+
+                float groundNoise(vec2 p) {
+                    vec2 i = floor(p);
+                    vec2 f = fract(p);
+                    vec2 u = f * f * (3.0 - 2.0 * f);
+                    return mix(
+                        mix(groundHash(i + vec2(0.0, 0.0)), groundHash(i + vec2(1.0, 0.0)), u.x),
+                        mix(groundHash(i + vec2(0.0, 1.0)), groundHash(i + vec2(1.0, 1.0)), u.x),
+                        u.y
+                    );
+                }
+
+                float groundFbm(vec2 p) {
+                    float v = groundNoise(p) * 0.55;
+                    p = mat2(0.8, -0.6, 0.6, 0.8) * p * 2.02 + vec2(3.1, 7.4);
+                    v += groundNoise(p) * 0.30;
+                    p = mat2(0.8, -0.6, 0.6, 0.8) * p * 2.05 + vec2(1.7, 4.3);
+                    v += groundNoise(p) * 0.15;
+                    return v;
+                }
             \n` + shader.fragmentShader;
 
-            // Detiled floor sampling.
-            //
-            // A photogrammetry scan is not a seamless tile, so repeating it across
-            // a 300 m disc would draw a visible grid. This samples it twice from
-            // world position -- the second copy rotated and offset -- and
-            // cross-fades between them on a mask far coarser than the tile, which
-            // breaks up the repeat without any seam of its own. Two samples, no
-            // extra geometry. UVs come from world XZ rather than the mesh's own,
-            // so the pattern stays put while the ground ripples during emergence.
+            // Multi-scale organic detiled floor sampling.
+            // Eliminates periodic grid artifacts using 3 non-periodic texture samples
+            // with irrational rotations and FBM continuous noise blending.
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <map_fragment>',
                 `
                 #ifdef USE_MAP
-                    vec2 fp = vGroundWorldPos.xz * ${FOREST_FLOOR_UV_SCALE.toFixed(6)};
-                    vec2 uvA = fp;
-                    vec2 uvB = mat2(0.80, -0.60, 0.60, 0.80) * fp + vec2(0.37, 0.61);
-                    float fmask = smoothstep(-0.25, 0.25,
-                        sin(fp.x * 0.21 + 1.7) * sin(fp.y * 0.17 - 0.9));
-                    diffuseColor *= mix(texture2D(map, uvA), texture2D(map, uvB), fmask);
+                    vec2 baseUV = vGroundWorldPos.xz * ${FOREST_FLOOR_UV_SCALE.toFixed(6)};
+
+                    // Three non-periodic sample coordinates at irrational rotation angles and scales
+                    vec2 uv1 = baseUV;
+                    vec2 uv2 = mat2(0.7071, -0.7071, 0.7071, 0.7071) * (baseUV * 1.37) + vec2(12.34, 56.78);
+                    vec2 uv3 = mat2(0.8660, 0.5000, -0.5000, 0.8660) * (baseUV * 0.618) + vec2(91.23, 34.56);
+
+                    // Organic blend masks derived from multi-octave continuous noise
+                    float n1 = groundFbm(vGroundWorldPos.xz * 0.055);
+                    float n2 = groundFbm(vGroundWorldPos.xz * 0.028 + vec2(15.7, 82.3));
+
+                    // Smooth 3-way partition weights with zero repeating grid lines
+                    float w1 = smoothstep(0.20, 0.75, n1);
+                    float w2 = smoothstep(0.25, 0.80, n2) * (1.0 - w1 * 0.7);
+                    float w3 = max(0.001, 1.0 - (w1 + w2));
+                    float totalW = w1 + w2 + w3;
+                    w1 /= totalW; w2 /= totalW; w3 /= totalW;
+
+                    vec4 col1 = texture2D(map, uv1);
+                    vec4 col2 = texture2D(map, uv2);
+                    vec4 col3 = texture2D(map, uv3);
+
+                    vec4 floorColor = col1 * w1 + col2 * w2 + col3 * w3;
+
+                    // Subtle ecological color modulation across the terrain:
+                    // Damp rich soil pockets, warm dry foliage patches, mossy undertones
+                    float bioPatch = groundFbm(vGroundWorldPos.xz * 0.012 + vec2(43.1, 19.5));
+                    vec3 dampHumus = vec3(0.88, 0.85, 0.80);
+                    vec3 mossGreen = vec3(1.02, 1.09, 0.93);
+                    vec3 dryLeaves = vec3(1.07, 1.02, 0.92);
+
+                    vec3 biomeTint = mix(dampHumus, mix(mossGreen, dryLeaves, smoothstep(0.40, 0.70, bioPatch)), smoothstep(0.25, 0.55, bioPatch));
+                    floorColor.rgb *= biomeTint;
+
+                    diffuseColor *= floorColor;
                 #endif
                 `
             );
@@ -2892,7 +2980,7 @@ class DuarApp {
     // Fly to a painting and centre it, framed so the whole work is on screen.
     // Nothing opens — there is no portal behind a painting.
     focusPainting(door) {
-        if (this.isTraveling || this._switching) return;
+        if (this.isTraveling || this.isFlying || this._switching) return;
         this.dismissIntro();
         // The one work being looked at earns the 1200px master, ahead of the queue,
         // and is protected from eviction while it holds focus.
@@ -2920,7 +3008,7 @@ class DuarApp {
     // Fly to a tree or the sacred rose, framing the complete height and width
     // with optical margins tailored for both mobile phone and widescreen desktop.
     focusFlora(door) {
-        if (this.isTraveling || this._switching) return;
+        if (this.isTraveling || this.isFlying || this._switching) return;
         this.dismissIntro();
 
         const obj = door.group || door;
@@ -2992,10 +3080,18 @@ class DuarApp {
     // In full view of a tree or the sacred rose, dynamically hide any other trees
     // standing in front of the camera sightline to guarantee an open, unobstructed view.
     _updateForestFocusOcclusion() {
-        if (this.viewMode !== 'forest' || !this.activeDoor) {
+        if (this.viewMode !== 'forest' || !this.activeDoor || this.isFlying) {
             if (this._occludedTrees && this._occludedTrees.size > 0) {
                 this._occludedTrees.forEach(d => {
-                    if (d.group) d.group.visible = true;
+                    if (d.group) {
+                        d.group.visible = true;
+                        const targetScale = d.scale || 1.0;
+                        gsap.killTweensOf(d.group.scale);
+                        gsap.to(d.group.scale, {
+                            x: targetScale, y: targetScale, z: targetScale,
+                            duration: 0.5, ease: 'power2.out'
+                        });
+                    }
                 });
                 this._occludedTrees.clear();
             }
@@ -3034,41 +3130,44 @@ class DuarApp {
             const proj = wx * uX + wz * uZ;
             const t = proj / segLen;
 
-            const baseRadius = {
-                banyan: 14.0,
-                peepal: 9.0,
-                mango: 7.5,
-                neem: 6.5,
-            }[door.species] || (door.isShrub ? 1.0 : 7.0);
-
-            const effectiveRadius = baseRadius * (door.scale || door.group.scale?.x || 1.0);
-
             // Perpendicular distance from sightline segment
             const perpX = wx - proj * uX;
             const perpZ = wz - proj * uZ;
             const perpDist = Math.sqrt(perpX * perpX + perpZ * perpZ);
             const distToCam = Math.sqrt(wx * wx + wz * wz);
 
-            // Hide if standing between camera and target sightline, or if right at camera position
-            const isAlongSightline = (t > 0.05 && t < 0.90 && perpDist < effectiveRadius + 1.2);
-            const isEngulfingCamera = (distToCam < effectiveRadius * 0.75 && t < 0.90);
+            // Only occlude if literally standing right in front of the lens (< 3.5m) blocking the center sightline
+            const isDirectBlocker = (t > 0.15 && t < 0.85 && perpDist < 2.0 && distToCam < 3.5);
 
-            if (isAlongSightline || isEngulfingCamera) {
+            if (isDirectBlocker) {
                 currentOccluded.add(door);
             }
         }
 
-        // Restore trees no longer occluded
+        // Restore trees no longer occluded smoothly
         this._occludedTrees.forEach(door => {
             if (!currentOccluded.has(door) && door.group) {
                 door.group.visible = true;
+                const targetScale = door.scale || 1.0;
+                gsap.killTweensOf(door.group.scale);
+                gsap.to(door.group.scale, {
+                    x: targetScale, y: targetScale, z: targetScale,
+                    duration: 0.5, ease: 'power2.out'
+                });
             }
         });
 
-        // Hide newly occluded trees
+        // Hide newly occluded trees smoothly
         currentOccluded.forEach(door => {
-            if (door.group && door.group.visible) {
-                door.group.visible = false;
+            if (door.group && !this._occludedTrees.has(door)) {
+                gsap.killTweensOf(door.group.scale);
+                gsap.to(door.group.scale, {
+                    x: 0.001, y: 0.001, z: 0.001,
+                    duration: 0.4, ease: 'power2.in',
+                    onComplete: () => {
+                        if (currentOccluded.has(door)) door.group.visible = false;
+                    }
+                });
             }
         });
 
@@ -3096,16 +3195,22 @@ class DuarApp {
                 const doorObj = { group, data, hinge, isOpen: false };
                 this.createDoorFrame(group, data);
 
-                loader.load(getAssetUrl(data.modelPath), (gltf) => {
-                    const model = gltf.scene; const panel = model.getObjectByName('Door') || model;
-                    model.traverse(o => { if (o.isMesh) { o.material = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.4, metalness: 0.2 }); o.castShadow = true; o.receiveShadow = true; } });
-                    // Sink panel slightly into ground for shadow contact
-                    panel.position.set(0.75, -0.02, 0); hinge.add(panel); doorObj.panel = panel;
-                }, null, () => {
+                const createMonolith = () => {
                     // Monolith: height 3.6 (extended), center at 1.78 means bottom at -0.02
                     const monolith = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3.6, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4, metalness: 0.2 }));
                     monolith.position.set(0.75, 1.78, 0); monolith.castShadow = true; monolith.receiveShadow = true; hinge.add(monolith); doorObj.panel = monolith;
-                });
+                };
+
+                if (data.modelPath) {
+                    loader.load(getAssetUrl(data.modelPath), (gltf) => {
+                        const model = gltf.scene; const panel = model.getObjectByName('Door') || model;
+                        model.traverse(o => { if (o.isMesh) { o.material = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.4, metalness: 0.2 }); o.castShadow = true; o.receiveShadow = true; } });
+                        // Sink panel slightly into ground for shadow contact
+                        panel.position.set(0.75, -0.02, 0); hinge.add(panel); doorObj.panel = panel;
+                    }, null, createMonolith);
+                } else {
+                    createMonolith();
+                }
                 doorObj.portalHitbox = group.userData.portalHitbox; // Retrieve from frame creation
                 doorObj.portalMaterial = group.userData.portalMaterial; // Vortex shader material
 
@@ -3665,6 +3770,21 @@ class DuarApp {
             const motes = this.roseCenterpiece.userData.motes;
             if (motes) {
                 motes.rotation.y = this.time * 0.25;
+            }
+            const shadowLight = this.roseCenterpiece.userData.shadowLight;
+            if (shadowLight && this._sky) {
+                const cel = this._sky.cel;
+                if (cel.sunAlt > 0.01) {
+                    const dir = _sunDirScratch.copy(cel.sunPos).normalize();
+                    shadowLight.position.set(dir.x * 12, Math.max(dir.y * 12, 1.5), dir.z * 12);
+                    shadowLight.intensity = Math.min(2.2, Math.max(0.2, cel.sunAlt * 3.2));
+                    shadowLight.color.set(0xfff2c8);
+                } else {
+                    const dir = _moonDirScratch.copy(cel.moonPos).normalize();
+                    shadowLight.position.set(dir.x * 12, Math.max(dir.y * 12, 1.5), dir.z * 12);
+                    shadowLight.intensity = Math.min(0.55, Math.max(0.06, cel.moonAlt * 1.2));
+                    shadowLight.color.set(0xa0bee6);
+                }
             }
         }
         if (this.viewMode === 'forest') {

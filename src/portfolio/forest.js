@@ -137,11 +137,76 @@ function applyFoliageSunShading(shader) {
 // the cluster and its displacement are multiplied by it, so the sway stays a
 // fixed fraction of the leaf however the instance is scaled.
 //
-// `useHeightCompliance` anchors the bottom of the deformed geometry. It is right
-// for a mesh that spans the whole tree and wrong for an instanced leaf cluster,
-// where local Y says nothing about height up the trunk and the whole cluster
-// should move together.
-function injectFoliageWind(shader, flutterMult = 1.0, ampWave = 1.0, ampFlutter = 1.0, complianceExpr = null, speedMult = 1.0, branch = null) {
+// ---------------------------------------------------------------------------
+// GPU Vertex Shader Foliage Wind Engine
+// ---------------------------------------------------------------------------
+
+export const FOLIAGE_WIND_SPECIES = {
+    // Ancient, massive colossus: very slow, heavy, deep undulating swell
+    banyan: {
+        speedMult: 0.32,      // Heavy, slow movement
+        waveAmp: 0.36,        // Restrained, dignified displacement
+        branchAmp: 0.18,      // Slow branch drift
+        branchFreq: 0.18,     // Long wavelength across expansive crown
+        flutterAmp: 0.035,    // Quiet, heavy leaves
+        flutterMult: 0.40,    // Slow rustle
+        treeHeight: 22.0
+    },
+    // Majestic sacred fig: slow, stately, cathedral crown sway
+    peepal: {
+        speedMult: 0.42,      // Heavy, slow sway for towering cathedral crown
+        waveAmp: 0.40,        // Dignified sway
+        branchAmp: 0.22,      // Gentle branch undulating
+        branchFreq: 0.22,
+        flutterAmp: 0.06,     // Delicate shimmer on petioles
+        flutterMult: 0.65,
+        treeHeight: 20.0
+    },
+    // Dense rounded umbrella canopy: medium weight, natural breezy movement
+    mango: {
+        speedMult: 0.85,
+        waveAmp: 0.60,        // Visible organic canopy sway
+        branchAmp: 0.30,      // Distinct branch waves across canopy
+        branchFreq: 0.30,
+        flutterAmp: 0.085,    // Lively foliage rustle
+        flutterMult: 0.90,
+        treeHeight: 16.0
+    },
+    // Feathery, open crown: calm, graceful, gentle sway
+    neem: {
+        speedMult: 0.38,      // Calmed down significantly from 1.10
+        waveAmp: 0.24,        // Gentle displacement (reduced from 0.72)
+        branchAmp: 0.08,      // Subtle limb sway (reduced from 0.20)
+        branchFreq: 0.18,     // Wide smooth waves instead of jitter (reduced from 0.35)
+        flutterAmp: 0.035,    // Soft, delicate shimmer (reduced from 0.13)
+        flutterMult: 0.45,    // Slowed leaf flutter (reduced from 1.15)
+        treeHeight: 16.0
+    },
+    // Centerpiece Floribunda Rose: stable, firmly rooted in ground with subtle organic micro-breeze
+    rose: {
+        speedMult: 0.50,
+        waveAmp: 0.02,        // firmly planted, no wobble
+        branchAmp: 0.01,      // steady branches
+        branchFreq: 0.20,
+        flutterAmp: 0.018,    // very subtle organic petal breath
+        flutterMult: 0.70,
+        treeHeight: 1.65
+    },
+    // Shrub / fallback
+    default: {
+        speedMult: 0.85,
+        waveAmp: 0.50,
+        branchAmp: 0.25,
+        branchFreq: 0.30,
+        flutterAmp: 0.07,
+        flutterMult: 0.90,
+        treeHeight: 16.0
+    }
+};
+
+function injectFoliageWind(shader, config = {}) {
+    const cfg = { ...FOLIAGE_WIND_SPECIES.default, ...config };
+
     shader.uniforms.uWindTime = forestWindUniforms.uWindTime;
     shader.uniforms.uWindStrength = forestWindUniforms.uWindStrength;
     shader.uniforms.uWindScale = forestWindUniforms.uWindScale;
@@ -152,162 +217,125 @@ function injectFoliageWind(shader, flutterMult = 1.0, ampWave = 1.0, ampFlutter 
         uniform float uWindScale;
     ` + shader.vertexShader;
 
-    // Defaults to the procedural foliage's metre-scale expression. GLB callers
-    // pass one normalised to their own geometry, since exporter units vary.
-    const compliance = complianceExpr || 'clamp((transformed.y + 0.5) * 0.25, 0.0, 1.0)';
-
     shader.vertexShader = shader.vertexShader.replace(
         '#include <begin_vertex>',
         `
         #include <begin_vertex>
 
-        #ifdef USE_INSTANCING
-            vec4 wPos = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
+        #ifdef USE_BATCHING
+            vec4 wPos = modelMatrix * batchingMatrix * vec4(position, 1.0);
+        #elif defined( USE_INSTANCING )
+            vec4 wPos = modelMatrix * instanceMatrix * vec4(position, 1.0);
         #else
-            vec4 wPos = modelMatrix * vec4(transformed, 1.0);
+            vec4 wPos = modelMatrix * vec4(position, 1.0);
         #endif
 
-        // Spatial rolling wind wave across the forest.
-        //
-        // TIME BASE, because it is not what it looks like: uWindTime is
-        // this.time * 24, and this.time advances a flat 0.001 PER FRAME, not per
-        // second. At 60 fps that is 1.44 uWindTime units per second, so the
-        // coefficient below is in units of 1.44 rad/s -- 1.5 here is ~0.34 Hz, a
-        // ~3 s sway. Reading this as 24x real seconds puts every rate out by
-        // 16.7x, which is how the canopies once ended up on a 36-second period
-        // and looked completely static. (It also means the wind is frame-rate
-        // dependent; that predates this shader.)
-        float wavePhase = dot(wPos.xz, vec2(0.707, 0.707)) * uWindScale - uWindTime * ${(1.5 * speedMult).toFixed(4)};
-        float wave = sin(wavePhase) * 0.22 + sin(wavePhase * 2.2 + 1.1) * 0.09;
+        // World-space wind calculations
+        // 1. Spatial rolling wind wave across the forest (horizontal XZ)
+        vec2 windDir = vec2(0.707, 0.707);
+        float wavePhase = dot(wPos.xz, windDir) * uWindScale - uWindTime * ${(1.5 * cfg.speedMult).toFixed(4)};
+        float wave = sin(wavePhase) * 0.72 + sin(wavePhase * 2.15 + 1.1) * 0.28;
 
-        // Organic high-frequency leaf shimmer. Phase is taken from LOCAL position:
-        // world position varies by 3.2 radians per world unit here, which is a
-        // different flutter value at each corner of the same leaf and tears it.
-        float flutter = sin(uWindTime * ${(5.2 * flutterMult * Math.sqrt(speedMult)).toFixed(4)} + dot(transformed, vec3(3.2))) * 0.055;
+        // 2. Branch-level differential sway (different limbs moving out of phase)
+        float brPhase1 = dot(wPos.xyz, vec3(${cfg.branchFreq.toFixed(4)}, ${(cfg.branchFreq * 1.22).toFixed(4)}, ${(cfg.branchFreq * 0.88).toFixed(4)})) - uWindTime * ${(1.75 * cfg.speedMult).toFixed(4)};
+        float brWave1 = sin(brPhase1) * 0.65 + sin(brPhase1 * 1.95 + 0.8) * 0.35;
 
-        // Branch-level motion: neighbouring parts of one canopy moving out of
-        // phase with each other.
-        //
-        // This is what was missing. Amplitude was never the problem -- the canopy
-        // was already displaced a third of a metre. But the wave's wavelength is
-        // 84 m, so across a single 20 m tree it is nearly constant and the whole
-        // canopy just slid back and forth as a rigid body, which the eye barely
-        // registers. Foliage reads as moving because of RELATIVE motion between
-        // its parts. The frequency here is set from the mesh's own size, so the
-        // phase turns over a few times across the canopy while staying almost
-        // constant across any one leaf -- variation between branches, none within
-        // a leaf, so nothing tears.
-        ${branch ? `
-        float branchPhase = dot(transformed, vec3(${branch.freq.toFixed(5)})) + uWindTime * ${branch.speed.toFixed(4)};
-        float branchWave = sin(branchPhase) * 0.5 + sin(branchPhase * 1.9 + 1.3) * 0.25;
-        ` : 'float branchWave = 0.0;'}
+        float brPhase2 = dot(wPos.xyz, vec3(${(-cfg.branchFreq * 0.92).toFixed(4)}, ${(cfg.branchFreq * 0.75).toFixed(4)}, ${(cfg.branchFreq * 1.15).toFixed(4)})) - uWindTime * ${(1.25 * cfg.speedMult).toFixed(4)};
+        float brWave2 = sin(brPhase2);
 
-        float heightCompliance = ${compliance};
-        // Wave and flutter are amplified separately. The wave is a function of
-        // world XZ at a long wavelength, so it is near-constant across one tree
-        // and moves the whole canopy together -- it can be pushed hard without
-        // distorting anything. Flutter varies per vertex, so pushing it pulls
-        // the corners of a single leaf apart; it stays small.
-        float waveAmp = uWindStrength * heightCompliance * ${ampWave.toFixed(4)};
-        float fltAmp  = uWindStrength * heightCompliance * ${ampFlutter.toFixed(4)};
+        // 3. High-frequency leaf shimmer / flutter (smooth across small triangle spans, no tearing)
+        float fltPhase = uWindTime * ${(5.0 * cfg.flutterMult * Math.sqrt(cfg.speedMult)).toFixed(4)} + dot(wPos.xyz, vec3(0.65, 0.95, 0.80));
+        float flutter = sin(fltPhase) * 0.65 + sin(fltPhase * 2.3 + 1.5) * 0.35;
 
-        float brAmp = uWindStrength * heightCompliance * ${(branch ? branch.amp : 0).toFixed(4)};
+        // 4. Height compliance: lower branches sway gently, upper crown sways fully
+        float heightAboveBase = max(0.0, wPos.y - modelMatrix[3].y);
+        float normHeight = clamp(heightAboveBase / ${cfg.treeHeight.toFixed(2)}, 0.0, 1.0);
+        float compliance = mix(0.55, 1.0, normHeight);
 
-        transformed.x += wave * 0.24 * waveAmp + flutter * fltAmp + branchWave * brAmp;
-        transformed.z += wave * 0.18 * waveAmp + flutter * fltAmp + branchWave * brAmp * 0.75;
-        transformed.y += abs(wave) * 0.05 * waveAmp - abs(branchWave) * brAmp * 0.20;
+        float str = uWindStrength * compliance;
+        vec3 disp = vec3(0.0);
+
+        // Horizontal sway along wind direction
+        disp.x += (wave * ${(cfg.waveAmp * 0.82).toFixed(4)} + brWave1 * ${(cfg.branchAmp * 0.72).toFixed(4)} + flutter * ${cfg.flutterAmp.toFixed(4)}) * str;
+        disp.z += (wave * ${(cfg.waveAmp * 0.62).toFixed(4)} + brWave2 * ${(cfg.branchAmp * 0.68).toFixed(4)} + flutter * ${(cfg.flutterAmp * 0.82).toFixed(4)}) * str;
+
+        // Natural organic branch dipping during gusts
+        disp.y += (-abs(wave) * ${(cfg.waveAmp * 0.14).toFixed(4)} + brWave1 * ${(cfg.branchAmp * 0.28).toFixed(4)}) * str;
+
+        wPos.xyz += disp;
         `
     );
+
+    shader.vertexShader = shader.vertexShader.replace(
+        '#include <project_vertex>',
+        `
+        vec4 mvPosition = viewMatrix * wPos;
+        gl_Position = projectionMatrix * mvPosition;
+        `
+    );
+
+    if (shader.vertexShader.includes('#include <worldpos_vertex>')) {
+        shader.vertexShader = shader.vertexShader.replace(
+            '#include <worldpos_vertex>',
+            `
+            #if defined( USE_ENVMAP ) || defined( DISTANCE ) || defined ( USE_SHADOWMAP ) || defined ( USE_TRANSMISSION ) || NUM_SPOT_LIGHT_COORDS > 0
+                vec4 worldPosition = wPos;
+            #endif
+            `
+        );
+    }
 }
 
 function applyFoliageWindShader(mat, flutterMult = 1.0) {
     if (!mat || mat._hasWindShader) return;
     mat._hasWindShader = true;
     mat.onBeforeCompile = (shader) => {
-        injectFoliageWind(shader, flutterMult, 1.0, 1.0, null, 1.0, null);
-        // A material gets exactly one onBeforeCompile, so the directional
-        // shading is injected here rather than as a second hook.
+        injectFoliageWind(shader, { ...FOLIAGE_WIND_SPECIES.default, flutterMult });
         applyFoliageSunShading(shader);
     };
 }
 
-// Peak sway as a fraction of the deformed geometry's own size, at wind strength
-// 1.0, given separately for the two components.
-//
-// The reference size means different things in the two cases. For an instanced
-// leaf spray the geometry IS one small clump, so both components can be a tenth
-// of it. For a single mesh covering the entire canopy the reference is the whole
-// tree: the wave can still be a useful fraction of that, because it is smooth
-// and swings the canopy as one, but the flutter has to stay tiny or it tears
-// individual leaves apart. Sizing both from one number is why every tree except
-// neem sat visibly still -- a fraction small enough to keep flutter safe left
-// the wave at ~1% of a 20 m canopy, which is nothing.
-const WIND_WAVE_FRACTION_CLUSTER = 0.10;
-const WIND_FLUTTER_FRACTION_CLUSTER = 0.10;
-const WIND_WAVE_FRACTION_CANOPY = 0.055;
-const WIND_FLUTTER_FRACTION_CANOPY = 0.008;
-// Branch sway, as a fraction of canopy size, and how many times its phase turns
-// over across the mesh. Clusters do not need it -- each one is already an
-// independent object with its own instance position.
-// Cycles is a direct trade: more of them means more branch-to-branch variation
-// and more phase difference across each individual leaf, which stretches it.
-// 2.5 keeps the within-leaf stretch around 15% -- leaves do flex -- while still
-// giving several independently-moving regions per canopy.
-const WIND_BRANCH_FRACTION_CANOPY = 0.05;
-const WIND_BRANCH_CYCLES = 2.5;
-const WIND_BRANCH_PEAK = 0.75;
-const WIND_WAVE_COEFF = 0.31 * 0.24;
-const WIND_FLUTTER_COEFF = 0.055;
-
-// Wind for foliage inside a loaded GLB. Chains onto whatever hook the material
-// already has instead of replacing it.
-//
-// Amplitude is derived from `mesh.geometry`'s own bounding box, so it is correct
-// whether the mesh is a whole-tree canopy or a small instanced leaf cluster. A
-// mesh that spans the tree gets height compliance so its base stays put; an
-// instanced cluster does not, because it should move as one.
-export function applyGlbFoliageWind(mesh, flutterMult = 1.0) {
+export function applyGlbFoliageWind(mesh, speciesKeyOrOptions = 'default') {
     const mat = mesh && mesh.material;
-    if (!mat || mat._hasWindShader || !mesh.geometry) return;
+    if (!mat || !mesh.geometry) return;
 
-    mesh.geometry.computeBoundingBox();
-    const bb = mesh.geometry.boundingBox;
-    if (!bb) return;
-    const size = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z);
-    if (!(size > 0)) return;
+    let config;
+    let specKey = 'default';
+    if (typeof speciesKeyOrOptions === 'string') {
+        specKey = speciesKeyOrOptions;
+        config = FOLIAGE_WIND_SPECIES[speciesKeyOrOptions] || FOLIAGE_WIND_SPECIES.default;
+    } else if (typeof speciesKeyOrOptions === 'number') {
+        config = { ...FOLIAGE_WIND_SPECIES.default, flutterMult: speciesKeyOrOptions };
+    } else if (speciesKeyOrOptions && typeof speciesKeyOrOptions === 'object') {
+        config = { ...FOLIAGE_WIND_SPECIES.default, ...speciesKeyOrOptions };
+    } else {
+        config = FOLIAGE_WIND_SPECIES.default;
+    }
 
-    const cluster = mesh.isInstancedMesh;
-    const waveFrac = cluster ? WIND_WAVE_FRACTION_CLUSTER : WIND_WAVE_FRACTION_CANOPY;
-    const fltFrac = cluster ? WIND_FLUTTER_FRACTION_CLUSTER : WIND_FLUTTER_FRACTION_CANOPY;
-    const ampWave = (waveFrac / WIND_WAVE_COEFF) * size;
-    const ampFlutter = (fltFrac / WIND_FLUTTER_COEFF) * size;
+    mat._foliageSpeciesKey = specKey;
+    mat._windConfig = config;
 
-    // An instanced cluster is one leaf spray repeated; it sways as a unit. A
-    // single mesh covering the whole canopy has to stay attached at the bottom,
-    // and the anchor is normalised to that mesh's own bounding box so it works
-    // whatever units the exporter used.
-    const h = bb.max.y - bb.min.y;
-    // The stock rates (~0.34 Hz sway, ~1.2 Hz rustle) already read correctly on
-    // both a clump and a canopy, so nothing is retimed here. See the TIME BASE
-    // note in injectFoliageWind before changing this.
-    const speedMult = 1.0;
-    const branch = cluster ? null : {
-        // 5 cycles across the mesh's own extent, whatever units it is in.
-        freq: (WIND_BRANCH_CYCLES * 2 * Math.PI) / (size * 3),
-        speed: 2.0,   // ~0.46 Hz at the real time base
-        amp: (WIND_BRANCH_FRACTION_CANOPY / WIND_BRANCH_PEAK) * size,
-    };
-    const complianceExpr = (cluster || !(h > 0))
-        ? '1.0'
-        : `clamp((transformed.y - (${bb.min.y.toFixed(4)})) / ${h.toFixed(4)}, 0.0, 1.0)`;
+    if (!mat._hasWindShader) {
+        mat._hasWindShader = true;
+        mat.customProgramCacheKey = () => `foliage_wind_${specKey}`;
+        const prior = mat.onBeforeCompile;
+        mat.onBeforeCompile = (shader, renderer) => {
+            if (prior) prior(shader, renderer);
+            injectFoliageWind(shader, config);
+        };
+        mat.needsUpdate = true;
+    }
 
-    mat._hasWindShader = true;
-    const prior = mat.onBeforeCompile;
-    mat.onBeforeCompile = (shader, renderer) => {
-        if (prior) prior(shader, renderer);
-        injectFoliageWind(shader, flutterMult, ampWave, ampFlutter, complianceExpr, speedMult, branch);
-    };
-    mat.needsUpdate = true;
+    if (mesh.customDepthMaterial && !mesh.customDepthMaterial._hasWindShader) {
+        mesh.customDepthMaterial._hasWindShader = true;
+        mesh.customDepthMaterial.customProgramCacheKey = () => `foliage_depth_wind_${specKey}`;
+        const priorDepth = mesh.customDepthMaterial.onBeforeCompile;
+        mesh.customDepthMaterial.onBeforeCompile = (shader, renderer) => {
+            if (priorDepth) priorDepth(shader, renderer);
+            injectFoliageWind(shader, config);
+        };
+        mesh.customDepthMaterial.needsUpdate = true;
+    }
 }
 
 function applyGrassWindShader(mat) {
@@ -952,9 +980,9 @@ export const TREE_PRESETS = {
         leafColor: 0x2e5625,
         leafColorVariance: 0.12,
         leafRoughness: 0.46,
-        flutterMult: 0.85,
-        swayAmplitude: 0.05,
-        swayFreqMult: 0.85,
+        flutterMult: 0.40,
+        swayAmplitude: 0.035,
+        swayFreqMult: 0.35,
     },
     peepal: {
         trunkHeight: 7.2,
@@ -976,9 +1004,9 @@ export const TREE_PRESETS = {
         leafColor: 0x64943c,
         leafColorVariance: 0.15,
         leafRoughness: 0.42,
-        flutterMult: 1.8, // Characteristic rapid Peepal leaf flutter
-        swayAmplitude: 0.12,
-        swayFreqMult: 1.6,
+        flutterMult: 0.65,
+        swayAmplitude: 0.045,
+        swayFreqMult: 0.45,
     },
     neem: {
         trunkHeight: 7.0,
@@ -1000,9 +1028,9 @@ export const TREE_PRESETS = {
         leafColor: 0x3d6e27,
         leafColorVariance: 0.13,
         leafRoughness: 0.65,
-        flutterMult: 1.25,
-        swayAmplitude: 0.10,
-        swayFreqMult: 1.25,
+        flutterMult: 0.45,
+        swayAmplitude: 0.03,
+        swayFreqMult: 0.40,
     },
     gulmohar: {
         trunkHeight: 6.4,
@@ -1343,7 +1371,7 @@ export function preloadForestGLBs(onComplete) {
         { key: 'peepal', url: getAssetUrl('models/bodhi_tree.glb'), targetHeight: 20.0, groundSink: 2.15 },
         { key: 'mango', url: getAssetUrl('models/mango_tree_2.glb'), targetHeight: 16.0, groundSink: 0.08 },
         { key: 'neem', url: getAssetUrl('models/neem_tree.glb'), targetHeight: 16.0, groundSink: 2.15 },
-        { key: 'rose', url: getAssetUrl('models/red_rose_1k.glb'), targetHeight: 1.45, groundSink: 0.0 }
+        { key: 'rose', url: getAssetUrl('models/red_rose_1k.glb'), targetHeight: 1.65, groundSink: 0.07 }
     ];
 
     const promises = specs.map(spec => new Promise((resolve) => {
@@ -1388,15 +1416,33 @@ export function preloadForestGLBs(onComplete) {
                                 child.material.side = THREE.DoubleSide;
                                 child.material.shadowSide = THREE.DoubleSide;
                                 // Velvety natural organic rose petal sheen, matte texture & zero artificial emissive
-                                child.material.roughness = 0.72;
+                                child.material.roughness = 0.68;
                                 child.material.metalness = 0.0;
                                 child.material.emissive = new THREE.Color(0x000000);
                                 child.material.emissiveIntensity = 0.0;
                                 if (child.material.map) {
                                     child.material.map.colorSpace = THREE.SRGBColorSpace;
+                                    child.material.alphaTest = 0.35;
+                                    child.material.transparent = false;
+                                    child.material.depthWrite = true;
+                                    child.customDepthMaterial = new THREE.MeshDepthMaterial({
+                                        depthPacking: THREE.RGBADepthPacking,
+                                        map: child.material.map,
+                                        alphaTest: 0.35
+                                    });
+                                    child.customDepthMaterial.side = THREE.DoubleSide;
+                                }
+                                if (!child.material._hasSunShading) {
+                                    child.material._hasSunShading = true;
+                                    const prior = child.material.onBeforeCompile;
+                                    child.material.onBeforeCompile = (shader, renderer) => {
+                                        if (prior) prior(shader, renderer);
+                                        applyFoliageSunShading(shader);
+                                    };
                                 }
                                 child.material.needsUpdate = true;
                             }
+                            applyGlbFoliageWind(child, 'rose');
                         } else {
                             if (spec.key === 'neem') {
                                 child.material.side = THREE.DoubleSide;
@@ -1453,7 +1499,7 @@ export function preloadForestGLBs(onComplete) {
                             const trunkLike = /trunk|bark|wood|log|stem|branch/i.test(meshLabel);
                             const leafLike = /leaf|leaves|foliage|twig|frond|canopy|vine|blossom|flower|bright|dark|front/i.test(meshLabel);
                             if (isFoliageMat && leafLike && !trunkLike) {
-                                applyGlbFoliageWind(child, 1.0);
+                                applyGlbFoliageWind(child, spec.key);
                             }
 
                             // Directional shading for anything drawn DoubleSide, which
@@ -1565,6 +1611,13 @@ export function createTree(speciesKey, { seed = 1, scale = 1 } = {}) {
                             alphaTest: 0.35
                         });
                         child.customDepthMaterial.side = THREE.DoubleSide;
+                        if (child.material && child.material._windConfig && !child.customDepthMaterial._hasWindShader) {
+                            child.customDepthMaterial._hasWindShader = true;
+                            child.customDepthMaterial.onBeforeCompile = (shader) => {
+                                injectFoliageWind(shader, child.material._windConfig);
+                            };
+                            child.customDepthMaterial.needsUpdate = true;
+                        }
                     }
                 }
             }
@@ -1706,10 +1759,10 @@ export function getForestFloorTexture() {
     return tex;
 }
 
-// The baked tile (scripts/bake-floor-texture.py) covers 2.16 m of real ground --
+// The baked tile (scripts/bake-floor-texture.py) covers 23.09 m of real ground --
 // it is the largest fully covered square the scan could yield. Keep this in step
-// with the script's reported TILE SPAN or the litter comes out the wrong size.
-export const FOREST_FLOOR_UV_SCALE = 1 / 2.16;
+// with the script's reported TILE SPAN so the litter matches natural ground scale.
+export const FOREST_FLOOR_UV_SCALE = 1 / 23.0938;
 
 // ---------------------------------------------------------------------------
 // 8. Museum-Grade Ultra-Realistic Fibonacci Sacred Rose
@@ -1854,17 +1907,53 @@ export function createRoseCenterpiece(seed = 4242) {
     const group = new THREE.Group();
     group.name = 'RoseCenterpiece';
 
-    // No painted contact-shadow disc here. It was a 2.6m dark circle under a
-    // 1.45m flower -- wider than the plant is tall, so it read as a disc drawn on
-    // the grass rather than as shade. The rose casts a real shadow now that
-    // foliage sends and receives them, which is both correctly sized and moves
-    // with the sun.
+    // Deep multi-stage ground ambient occlusion & canopy shade disc directly under the rose bush
+    const shadowCanvas = document.createElement('canvas');
+    shadowCanvas.width = 256;
+    shadowCanvas.height = 256;
+    const ctx = shadowCanvas.getContext('2d');
+    
+    // Outer canopy soft diffuse shade
+    const gradOuter = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+    gradOuter.addColorStop(0, 'rgba(6, 4, 3, 0.72)');
+    gradOuter.addColorStop(0.35, 'rgba(8, 6, 4, 0.52)');
+    gradOuter.addColorStop(0.65, 'rgba(10, 8, 5, 0.24)');
+    gradOuter.addColorStop(0.88, 'rgba(12, 10, 6, 0.07)');
+    gradOuter.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = gradOuter;
+    ctx.fillRect(0, 0, 256, 256);
 
-    // Fallen ruby petals scattered directly on the forest soil with natural velvet texture & cast shadows
+    // Inner deep root-flare ambient occlusion core
+    const gradInner = ctx.createRadialGradient(128, 128, 0, 128, 128, 52);
+    gradInner.addColorStop(0, 'rgba(3, 2, 2, 0.88)');
+    gradInner.addColorStop(0.6, 'rgba(5, 4, 3, 0.55)');
+    gradInner.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = gradInner;
+    ctx.fillRect(0, 0, 256, 256);
+
+    const shadowTex = new THREE.CanvasTexture(shadowCanvas);
+    shadowTex.colorSpace = THREE.SRGBColorSpace;
+    const contactShadow = new THREE.Mesh(
+        new THREE.PlaneGeometry(3.4, 3.4),
+        new THREE.MeshBasicMaterial({
+            map: shadowTex,
+            transparent: true,
+            opacity: 0.92,
+            depthWrite: false,
+            toneMapped: false
+        })
+    );
+    contactShadow.name = 'RoseContactShadow';
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.position.set(0, 0.015, 0); // cleanly overlay soil
+    contactShadow.renderOrder = 3;
+    group.add(contactShadow);
+
+    // Fallen rich ruby petals scattered directly on the forest soil
     const fallenPetalGeo = createPetalGeometry(0.15, 0.11);
     const fallenPetalMat = new THREE.MeshStandardMaterial({
-        color: 0x8a101f,
-        roughness: 0.72,
+        color: 0xa81422,
+        roughness: 0.68,
         metalness: 0.0,
         side: THREE.DoubleSide,
         shadowSide: THREE.DoubleSide,
@@ -1875,7 +1964,7 @@ export function createRoseCenterpiece(seed = 4242) {
         const petal = new THREE.Mesh(fallenPetalGeo, fallenPetalMat);
         const dist = 0.20 + rand() * 0.55;
         const ang = rand() * Math.PI * 2;
-        petal.position.set(Math.cos(ang) * dist, 0.015, Math.sin(ang) * dist);
+        petal.position.set(Math.cos(ang) * dist, 0.018, Math.sin(ang) * dist);
         petal.rotation.x = Math.PI * 0.48 + (rand() - 0.5) * 0.2;
         petal.rotation.y = rand() * Math.PI * 2;
         petal.rotation.z = (rand() - 0.5) * 0.3;
@@ -1891,6 +1980,28 @@ export function createRoseCenterpiece(seed = 4242) {
     rosePivot.position.set(0, 0, 0);
     group.add(rosePivot);
 
+    // Dedicated high-precision shadow caster for the rose plant:
+    // Resolves millimeter-fine shadow silhouettes of rose petals, leaves, and thorny branches onto the soil
+    const roseShadowLight = new THREE.DirectionalLight(0xfff2c8, 1.8);
+    roseShadowLight.name = 'RoseCenterpieceShadowLight';
+    roseShadowLight.castShadow = true;
+    roseShadowLight.shadow.mapSize.set(1024, 1024);
+    roseShadowLight.shadow.camera.near = 0.5;
+    roseShadowLight.shadow.camera.far = 28.0;
+    const shadowBound = 1.7; // 3.4m x 3.4m tight frustum covering the 1.65m rose bush
+    roseShadowLight.shadow.camera.left = -shadowBound;
+    roseShadowLight.shadow.camera.right = shadowBound;
+    roseShadowLight.shadow.camera.top = shadowBound;
+    roseShadowLight.shadow.camera.bottom = -shadowBound;
+    roseShadowLight.shadow.camera.updateProjectionMatrix();
+    roseShadowLight.shadow.bias = -0.0003;
+    roseShadowLight.shadow.normalBias = 0.003;
+    roseShadowLight.shadow.radius = 1.2;
+    roseShadowLight.position.set(6, 12, 6);
+    roseShadowLight.target = rosePivot;
+    group.add(roseShadowLight);
+    group.userData.shadowLight = roseShadowLight;
+
     const enableShadows = (inst) => {
         inst.traverse((child) => {
             if (child.isMesh) {
@@ -1899,15 +2010,33 @@ export function createRoseCenterpiece(seed = 4242) {
                 if (child.material) {
                     child.material.shadowSide = THREE.DoubleSide;
                     child.material.side = THREE.DoubleSide;
-                    child.material.roughness = 0.72;
+                    child.material.roughness = 0.70;
                     child.material.metalness = 0.0;
                     child.material.emissive = new THREE.Color(0x000000);
                     child.material.emissiveIntensity = 0.0;
                     if (child.material.map) {
                         child.material.map.colorSpace = THREE.SRGBColorSpace;
+                        child.material.alphaTest = 0.35;
+                        child.material.transparent = false;
+                        child.material.depthWrite = true;
+                        child.customDepthMaterial = new THREE.MeshDepthMaterial({
+                            depthPacking: THREE.RGBADepthPacking,
+                            map: child.material.map,
+                            alphaTest: 0.35
+                        });
+                        child.customDepthMaterial.side = THREE.DoubleSide;
+                    }
+                    if (!child.material._hasSunShading) {
+                        child.material._hasSunShading = true;
+                        const prior = child.material.onBeforeCompile;
+                        child.material.onBeforeCompile = (shader, renderer) => {
+                            if (prior) prior(shader, renderer);
+                            applyFoliageSunShading(shader);
+                        };
                     }
                     child.material.needsUpdate = true;
                 }
+                applyGlbFoliageWind(child, 'rose');
             }
         });
     };
@@ -1953,9 +2082,10 @@ export function createRoseCenterpiece(seed = 4242) {
     );
     group.add(motes);
 
+    // Stable, firm grounding in earth: micro-sway only so the rose bush is rock solid
     group.userData.swayGroup = rosePivot;
-    group.userData.swayAmplitude = 0.035;
-    group.userData.swayFreqMult = 1.1;
+    group.userData.swayAmplitude = 0.002;
+    group.userData.swayFreqMult = 0.4;
     group.userData.motes = motes;
 
     return group;
