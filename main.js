@@ -37,6 +37,12 @@ const _sunDirScratch = new THREE.Vector3();
 const _moonDirScratch = new THREE.Vector3();
 const _skyColScratch = new THREE.Color();
 const _horizColScratch = new THREE.Color();
+const _walkForward = new THREE.Vector3();
+const _walkRight = new THREE.Vector3();
+const _walkDelta = new THREE.Vector3();
+const WALK_SPEED = 5.5;       // m/s, ground plane
+const WALK_BOOST = 2.2;       // Shift multiplier
+const WALK_RADIUS = 95;       // stay inside the ground's alpha fade, which starts at r=105
 
 // Sky and horizon grading stops.
 const C_DAY_ZENITH = new THREE.Color(0x1a4674);
@@ -606,6 +612,35 @@ class DuarApp {
         window.addEventListener('contextmenu', (e) => {
             // Only while a door is genuinely being right-dragged (dev mode).
             if (this.draggedDoor) e.preventDefault();
+        });
+
+        // WASD walking, forest mode only (see animate()). Recorded globally and
+        // gated at apply-time rather than only-while-forest, so a stray keyup
+        // after switching views can't leave a key "stuck" down.
+        this._walkKeys = { forward: false, back: false, left: false, right: false, boost: false };
+        const WALK_KEYS = {
+            KeyW: 'forward', ArrowUp: 'forward',
+            KeyS: 'back', ArrowDown: 'back',
+            KeyA: 'left', ArrowLeft: 'left',
+            KeyD: 'right', ArrowRight: 'right',
+            ShiftLeft: 'boost', ShiftRight: 'boost',
+        };
+        const isTypingTarget = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+        window.addEventListener('keydown', (e) => {
+            const action = WALK_KEYS[e.code];
+            if (!action || isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+            this._walkKeys[action] = true;
+            if (this.viewMode === 'forest') { e.preventDefault(); this.dismissIntro(); }
+        });
+        window.addEventListener('keyup', (e) => {
+            const action = WALK_KEYS[e.code];
+            if (action) this._walkKeys[action] = false;
+        });
+        // A window losing focus mid-press (alt-tab, a browser dialog) never
+        // delivers the matching keyup -- without this the camera walks forever
+        // in whatever direction was held at the moment of the switch.
+        window.addEventListener('blur', () => {
+            for (const k in this._walkKeys) this._walkKeys[k] = false;
         });
 
         let startX = 0; let startY = 0; let startTime = 0;
@@ -3993,6 +4028,49 @@ class DuarApp {
             this.controls.autoRotate = false;
             this.controls.maxPolarAngle = Math.PI * 0.54;
             this.controls.minDistance = 2.0;
+
+            // WASD walk. Translating camera.position and controls.target by the
+            // SAME vector is what makes this compatible with OrbitControls:
+            // update() below rebuilds position from target + the offset it reads
+            // at the top of its own call, so as long as that offset (position -
+            // target) is unchanged, the current zoom/angle survives the step and
+            // orbiting still works normally afterward. Moving position alone
+            // would be silently overwritten by the next update().
+            const wk = this._walkKeys;
+            if (!this.isTraveling && (wk.forward || wk.back || wk.left || wk.right)) {
+                _walkForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+                _walkForward.y = 0;
+                if (_walkForward.lengthSq() < 1e-6) _walkForward.set(0, 0, -1); // looking straight down/up
+                _walkForward.normalize();
+                _walkRight.set(_walkForward.z, 0, -_walkForward.x); // rotate -90° about Y
+
+                const speed = WALK_SPEED * (wk.boost ? WALK_BOOST : 1) * dt;
+                _walkDelta.set(0, 0, 0);
+                if (wk.forward) _walkDelta.add(_walkForward);
+                if (wk.back) _walkDelta.sub(_walkForward);
+                if (wk.right) _walkDelta.add(_walkRight);
+                if (wk.left) _walkDelta.sub(_walkRight);
+                // Normalize before scaling, or a diagonal (two keys) moves sqrt(2)x
+                // faster than a single key -- the classic strafe-speed bug.
+                if (_walkDelta.lengthSq() > 1e-6) _walkDelta.normalize().multiplyScalar(speed);
+
+                const nextX = this.controls.target.x + _walkDelta.x;
+                const nextZ = this.controls.target.z + _walkDelta.z;
+                const nextR = Math.hypot(nextX, nextZ);
+                // Clamp by scaling the step back at the boundary rather than
+                // snapping to the radius, so walking along the edge slides
+                // tangentially instead of sticking.
+                if (nextR > WALK_RADIUS) {
+                    const curR = Math.hypot(this.controls.target.x, this.controls.target.z);
+                    if (nextR > curR) _walkDelta.multiplyScalar(Math.max(0, (WALK_RADIUS - curR)) / (nextR - curR || 1));
+                }
+                this.camera.position.x += _walkDelta.x;
+                this.camera.position.z += _walkDelta.z;
+                this.controls.target.x += _walkDelta.x;
+                this.controls.target.z += _walkDelta.z;
+                this.dismissIntro();
+            }
+
             this.controls.update();
 
             // Strict terrain height clamp in forest mode: camera can never zoom or dip under the undulating ground

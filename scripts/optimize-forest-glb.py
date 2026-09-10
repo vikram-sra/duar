@@ -294,6 +294,14 @@ def main():
         if not MODELS.is_dir():
             raise SystemExit('run from the repo root (public/models not found)')
         jobs = [
+            # Both filenames below are stale on purpose: neem_tree.glb and
+            # red_rose.glb were already thinned once and shipped under new,
+            # content-addressed names (neem_tree_v2.glb, red_rose_1k.glb) so a
+            # cache couldn't serve the old bytes under the old filename -- see
+            # the case-insensitive/content-addressing note in the threejs skill.
+            # This default list exists for a first pass on a genuinely new
+            # over-large model; pass an explicit path (see --help) for anything
+            # already optimized once.
             (MODELS / 'neem_tree.glb', 'instances', 17),
             (MODELS / 'red_rose.glb', 'textures', 1),
         ]

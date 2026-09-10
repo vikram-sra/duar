@@ -1369,8 +1369,8 @@ export function preloadForestGLBs(onComplete) {
     const specs = [
         { key: 'banyan', url: getAssetUrl('models/chinese_banyan_ficus_microcarpa.glb'), targetHeight: 22.0, groundSink: 0.12 },
         { key: 'peepal', url: getAssetUrl('models/bodhi_tree.glb'), targetHeight: 20.0, groundSink: 2.15 },
-        { key: 'mango', url: getAssetUrl('models/mango_tree_2.glb'), targetHeight: 16.0, groundSink: 0.08 },
-        { key: 'neem', url: getAssetUrl('models/neem_tree.glb'), targetHeight: 16.0, groundSink: 2.15 },
+        { key: 'mango', url: getAssetUrl('models/mango_tree_2_v2.glb'), targetHeight: 16.0, groundSink: 0.08 },
+        { key: 'neem', url: getAssetUrl('models/neem_tree_v2.glb'), targetHeight: 16.0, groundSink: 2.15 },
         { key: 'rose', url: getAssetUrl('models/red_rose_1k.glb'), targetHeight: 1.65, groundSink: 0.07 }
     ];
 
