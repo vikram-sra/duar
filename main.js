@@ -1856,6 +1856,50 @@ class DuarApp {
         });
     }
 
+    // Refreshes the (otherwise frozen, autoUpdate=false) shadow map a few times
+    // a second for `duration` seconds, instead of every rendered frame.
+    //
+    // This exists because of two opposite failures, both from the same root
+    // cause: shadow updates driven only by sunAngle drift (see animate()) have
+    // no idea that a transition just populated the scene with new geometry.
+    //
+    // Forest mode used to paper over it with `autoUpdate = true` for a fixed
+    // window -- a full shadow re-render (two lights, up to 3072px) on every
+    // single rendered frame, for several seconds, at the exact moment 50 trees
+    // are being instantiated and their wind shaders compiled for the first
+    // time. That is the dominant cause of "transitions are jittery": the two
+    // most expensive things this app does were made to happen simultaneously,
+    // repeatedly, for seconds at a stretch.
+    //
+    // Portfolio/default mode had no equivalent at all, so a freshly-grown
+    // painting door sat with NO shadow -- the map still held the render from
+    // before the door existed -- until the next incidental sunAngle drift
+    // happened to cross the 0.008 threshold and refreshed it, at which point
+    // the shadow would pop in fully formed, disconnected from the door's own
+    // grow-in tween. That is "the first appearance of shadows is not smooth".
+    // 5-6 refreshes a second during the grow-in window is enough for a shadow
+    // growing under animated geometry to read as continuous, at a small
+    // fraction of doing it every frame.
+    _pulseShadowUpdates(duration, intervalMs = 175) {
+        if (this._shadowPulseTween) this._shadowPulseTween.kill();
+        let lastPulse = -Infinity;
+        this._shadowPulseTween = gsap.to({}, {
+            duration,
+            onUpdate: () => {
+                const now = performance.now();
+                if (now - lastPulse >= intervalMs) {
+                    lastPulse = now;
+                    this.renderer.shadowMap.needsUpdate = true;
+                }
+            },
+            onComplete: () => {
+                // One last refresh at full settle, so nothing is left mid-grow.
+                this.renderer.shadowMap.needsUpdate = true;
+                this._shadowPulseTween = null;
+            }
+        });
+    }
+
     // Smoothly fly the camera THROUGH space to `camPos` while aiming at `lookAt`.
     flyTo(camPos, lookAt, duration = 1.9, onArrive = null) {
         this.isFlying = true;
@@ -2802,6 +2846,13 @@ class DuarApp {
             this.resetScene();
         }
 
+        // This is the outgoing world dissolving, not the arrival -- unlike the
+        // grow-in tweens below (deliberately slow, tuned earlier for a natural
+        // feel and left alone here), nothing about this exit is a showcase
+        // moment, and the whole switch is blocked on it finishing before the
+        // next world starts building. At the old 0.5s/0.02s-stagger pace, the
+        // worst case (51 painting doors, or 50 trees) took up to 1.5s just to
+        // clear the stage. Tightened to worst-case ~0.87s.
         const outgoing = [...this.doors];
         await new Promise(resolve => {
             if (!outgoing.length) return resolve();
@@ -2812,8 +2863,8 @@ class DuarApp {
                 .forEach((door, i) => {
                     tl.to(door.group.scale, {
                         x: 0.001, y: 0.001, z: 0.001,
-                        duration: 0.5, ease: 'power2.in'
-                    }, i * 0.02);
+                        duration: 0.32, ease: 'power2.in'
+                    }, i * 0.011);
                 });
         });
 
@@ -2824,11 +2875,10 @@ class DuarApp {
         else this.setupDoors();
 
         if (mode === 'forest') {
-            this.renderer.shadowMap.autoUpdate = true;
-            gsap.delayedCall(4.2, () => {
-                this.renderer.shadowMap.autoUpdate = false;
-                this.renderer.shadowMap.needsUpdate = true;
-            });
+            // 7.05s covers the worst case: a tree at the walk radius gets
+            // baseDelay ~2.85s before its own 4.2s grow tween even starts (see
+            // the delay formula below).
+            this._pulseShadowUpdates(7.2);
             // Animate ground life wave & meadow grass sprouting outward across the terrain
             forestGroundUniforms.uForestActive.value = 1.0;
             forestGroundUniforms.uForestWave.value = 0.0;
@@ -2873,7 +2923,14 @@ class DuarApp {
                     });
                 });
         } else {
-            // Standard doors / paintings pop
+            // Standard doors / paintings pop. Up to 51 painting doors staggered
+            // by 0.045s each plus a 1.1s grow -- 3.35s worst case for the last
+            // one. See _pulseShadowUpdates for why this needs the same
+            // treatment forest mode gets: without it, a freshly grown door
+            // casts no shadow until the next incidental sun-angle refresh, and
+            // that shadow then pops in fully formed rather than growing in with
+            // the door.
+            this._pulseShadowUpdates(3.5);
             this.doors
                 .slice()
                 .sort((a, b) => a.group.position.lengthSq() - b.group.position.lengthSq())
