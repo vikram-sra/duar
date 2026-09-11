@@ -3101,7 +3101,11 @@ class DuarApp {
         pad.querySelectorAll('.wp-btn').forEach(b => { btn[b.dataset.dir] = b; });
         btn.jump = document.getElementById('wp-jump');
 
-        const DEAD_ZONE = 0.22;          // of the pad radius
+        // Of the pad radius (80px at the pad's current 160px CSS size, so this
+        // is a ~22px/~44px-diameter jump target -- matches the ring drawn in
+        // index.html's #walk-pad background, which is the visible edge of it.
+        // Keep the two in step if the pad is ever resized.
+        const DEAD_ZONE = 0.28;
         const SECTOR = Math.sin(Math.PI / 8); // 22.5°: eight equal sectors
         let activeId = null;
         let jumpPress = false;           // this press started in the dead zone: a tap, not a drag

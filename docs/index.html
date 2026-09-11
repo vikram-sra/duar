@@ -598,13 +598,20 @@
     }
 
     /* Touch walk pad: lower-left, above the dock line so the two never overlap,
-       where a left thumb rests while the right one drags to look. */
+       where a left thumb rests while the right one drags to look.
+       160px / 80px radius, sized as a thumb-driven joystick rather than a set
+       of small buttons -- the pad reads pointer POSITION over its whole area
+       (see _setupWalkPad), so this size is the real touch target, not just
+       the visual. DEAD_ZONE there is 0.28 of this radius = ~22px = a ~44px
+       tap circle for the jump button at centre, matching the ~44px guideline
+       for a touch target; the soft ring below marks that same boundary so the
+       walk/jump split is visible, not just guessable. */
     #walk-pad {
       position: fixed;
-      left: calc(18px + env(safe-area-inset-left));
-      bottom: calc(112px + env(safe-area-inset-bottom));
-      width: 124px;
-      height: 124px;
+      left: calc(16px + env(safe-area-inset-left));
+      bottom: calc(108px + env(safe-area-inset-bottom));
+      width: 160px;
+      height: 160px;
       z-index: 1001;
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -616,13 +623,19 @@
       -webkit-touch-callout: none;
       opacity: 0;
       transition: opacity 0.6s ease;
+      /* Dead-zone boundary, a soft ring at r=22px (see the note above) --
+         decoration only, drawn under the buttons, no effect on hit-testing. */
+      background: radial-gradient(circle at center,
+        rgba(255, 255, 255, 0.05) 0, rgba(255, 255, 255, 0.05) 21px,
+        transparent 22px, transparent 100%);
+      border-radius: 999px;
     }
     #walk-pad[hidden] { display: none; }
     #walk-pad.shown { opacity: 1; }
 
     .wp-btn {
-      width: 38px;
-      height: 38px;
+      width: 46px;
+      height: 46px;
       border-radius: 999px;
       display: flex;
       align-items: center;
@@ -635,7 +648,7 @@
       transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease, color 0.12s ease;
       pointer-events: none;         /* the pad reads the pointer, not each button */
     }
-    .wp-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+    .wp-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
     .wp-btn[data-dir="forward"] { grid-area: 1 / 2; }
     .wp-btn[data-dir="left"]    { grid-area: 2 / 1; }
     .wp-btn[data-dir="right"]   { grid-area: 2 / 3; }
@@ -648,19 +661,21 @@
     }
 
     /* Jump: the pad's own dead centre (see DEAD_ZONE in _setupWalkPad), where
-       no direction ever registers, so it costs no extra screen space. Round
-       like the arrows but filled, so it reads as a press-button among
-       direction indicators rather than a fifth arrow. */
+       no direction ever registers, so it costs no extra screen space. Sized to
+       the dead zone's own diameter (44px) rather than matching the arrow
+       buttons, so its visual size is an honest guide to its actual hit area.
+       Round but filled, so it reads as a press-button among direction
+       indicators rather than a fifth arrow. */
     #wp-jump {
       grid-area: 2 / 2;
-      width: 30px;
-      height: 30px;
+      width: 44px;
+      height: 44px;
       border-radius: 999px;
       background: rgba(255, 214, 119, 0.10);
       border: 0.5px solid rgba(255, 214, 119, 0.3);
       color: #ffd677;
     }
-    #wp-jump svg { width: 14px; height: 14px; }
+    #wp-jump svg { width: 17px; height: 17px; }
     #wp-jump.active {
       background: rgba(255, 214, 119, 0.32);
       border-color: rgba(255, 214, 119, 0.6);
@@ -868,7 +883,7 @@
       .flat-links a { font-size: 0.6rem; letter-spacing: 0.13rem; }
     }
   </style>
-  <script type="module" crossorigin src="./assets/index-D0VRIey_.js"></script>
+  <script type="module" crossorigin src="./assets/index-Bibh97k4.js"></script>
 </head>
 
 <body>
