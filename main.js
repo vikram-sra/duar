@@ -40,9 +40,26 @@ const _horizColScratch = new THREE.Color();
 const _walkForward = new THREE.Vector3();
 const _walkRight = new THREE.Vector3();
 const _walkDelta = new THREE.Vector3();
-const WALK_SPEED = 5.5;       // m/s, ground plane
-const WALK_BOOST = 2.2;       // Shift multiplier
+const WALK_SPEED = 8.0;       // m/s, ground plane -- a brisk jog, not a stroll
+const WALK_BOOST = 2.6;       // Shift multiplier -- ~20.8 m/s sprint
 const WALK_RADIUS = 95;       // stay inside the ground's alpha fade, which starts at r=105
+// A quick hop, not a platformer leap -- there is nothing here to jump ONTO, so
+// it is a traversal flourish, not a mechanic. Peak height and gravity chosen
+// together for a snappy, satisfying landing rather than a floaty arc: real-
+// world gravity (9.8) at this velocity feels slow and heavy at human scale.
+const JUMP_VELOCITY = 4.3;    // m/s, upward, on launch
+const JUMP_GRAVITY = 11.0;    // m/s^2, downward -- peak ~0.84 m, ~0.78 s airtime
+
+// Forest arrival. Trees used to be timed to trail an outward ground wave
+// (0.3 + dist/120 * 3.0 s of delay, then 4.2 s of growth): up to ~7 s before
+// the farthest tree settled. With the wave gone that delay had no reason to
+// exist, so the spread is now a short radial stagger and the growth itself is
+// a little quicker. Still one eased scale, no overshoot.
+const FOREST_GROW_DURATION = 3.0;  // s, per tree
+const FOREST_GROW_SPREAD = 0.6;    // s, nearest-to-farthest start stagger
+// Per-frame budget for creating trees. Building all ~50 synchronously landed in
+// a single rAF task right after clearDoors(), the 94-117 ms handler violations.
+const FOREST_BUILD_FRAME_MS = 6;
 
 // Sky and horizon grading stops.
 const C_DAY_ZENITH = new THREE.Color(0x1a4674);
@@ -484,6 +501,10 @@ class DuarApp {
             (navigator.deviceMemory !== undefined && navigator.deviceMemory <= 4)
         );
         this.isSmallPhone = isSmallPhone;
+        // Touch UI (the walk pad) keys off the primary pointer, not isMobile:
+        // iPadOS Safari reports a desktop Mac user agent and a >=768px width,
+        // so it passes neither isMobile test while having no keyboard to WASD with.
+        this.isTouch = isMobile || window.matchMedia('(pointer: coarse)').matches;
 
         // One tier object, derived once. Scattered `isMobile` checks drift out
         // of agreement as a scene grows; this is the single place cost scales
@@ -614,9 +635,11 @@ class DuarApp {
             if (this.draggedDoor) e.preventDefault();
         });
 
-        // WASD walking, forest mode only (see animate()). Recorded globally and
-        // gated at apply-time rather than only-while-forest, so a stray keyup
-        // after switching views can't leave a key "stuck" down.
+        // WASD walking, any view, while walk mode is on (dock toggle; see
+        // setWalkEnabled and _applyWalk). Key state is recorded always and
+        // gated at apply-time, so a keyup that arrives while walking is off
+        // can't leave a key "stuck" down for the next time it's switched on.
+        this.walkEnabled = false;
         this._walkKeys = { forward: false, back: false, left: false, right: false, boost: false };
         const WALK_KEYS = {
             KeyW: 'forward', ArrowUp: 'forward',
@@ -626,11 +649,25 @@ class DuarApp {
             ShiftLeft: 'boost', ShiftRight: 'boost',
         };
         const isTypingTarget = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+        // Vertical: integrated once a frame in _applyJump, consuming this flag.
+        // Not a held key like the WASD directions -- a single tap should be a
+        // single hop, not a bunny-hop for as long as the key is down, so the
+        // browser's key-repeat auto-fire (e.repeat) is ignored here.
+        this._jumpVelocity = 0;
+        this._jumpRequested = false;
         window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && this.walkEnabled && !e.repeat && !isTypingTarget(e.target)) {
+                e.preventDefault(); // stops the page from scrolling on Space
+                this._jumpRequested = true;
+                this.dismissIntro();
+                return;
+            }
             const action = WALK_KEYS[e.code];
             if (!action || isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
             this._walkKeys[action] = true;
-            if (this.viewMode === 'forest') { e.preventDefault(); this.dismissIntro(); }
+            // Only claim the key while walking is on; otherwise arrows keep
+            // their normal meaning (e.g. scrolling the page's text content).
+            if (this.walkEnabled) { e.preventDefault(); this.dismissIntro(); }
         });
         window.addEventListener('keyup', (e) => {
             const action = WALK_KEYS[e.code];
@@ -642,6 +679,11 @@ class DuarApp {
         window.addEventListener('blur', () => {
             for (const k in this._walkKeys) this._walkKeys[k] = false;
         });
+        // The touch pad writes its own state, OR-ed with the keys in animate(), so
+        // lifting a thumb off the pad can't release a key held on a real keyboard.
+        this._padKeys = { forward: false, back: false, left: false, right: false };
+        this._setupWalkPad();
+        this._updateWalkUI();
 
         let startX = 0; let startY = 0; let startTime = 0;
         this._isPointerDown = false;
@@ -803,6 +845,13 @@ class DuarApp {
                     outline: 2px solid rgba(255, 255, 255, 0.75);
                     outline-offset: 2px;
                 }
+                /* A toggle that is on (walk mode): lit, not just hovered. */
+                .glass-btn.is-on {
+                    background: rgba(255, 255, 255, 0.18);
+                    border-color: rgba(255, 255, 255, 0.38);
+                    color: #ffffff;
+                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+                }
                 .glass-btn.day-btn {
                     color: #ffd677;
                     background: rgba(255, 214, 119, 0.06);
@@ -891,6 +940,7 @@ class DuarApp {
             art: `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`, // Art Gallery Frame Icon
             duar: `<svg viewBox="0 0 24 24"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16h14zM9 5h6v14H9V5zm4 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>`, // Door Icon
             forest: `<svg viewBox="0 0 24 24"><path d="M12 2 5 13h4l-5 8h20l-5-8h4z"/><path d="M12 23v-4"/></svg>`, // Tree Icon
+            walk: `<svg viewBox="0 0 24 24"><path d="M12 4v16M4 12h16M9.5 6.5 12 4l2.5 2.5M9.5 17.5 12 20l2.5-2.5M6.5 9.5 4 12l2.5 2.5M17.5 9.5 20 12l-2.5 2.5"/></svg>`, // Four-way move
             instagram: `<svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>`
         };
 
@@ -1080,7 +1130,14 @@ class DuarApp {
         this.instaBtn = instaBtn;
         instaBtn.style.display = this.viewMode === 'portfolio' ? 'inline-flex' : 'none';
 
-        wrapper.append(homeBtn, motionBtn, randBtn, sunBtn, spiralBtn, moonBtn, modeBtn, instaBtn);
+        // Walk mode: WASD on a keyboard, the arrow pad on touch. Same toggle in
+        // every view; see setWalkEnabled.
+        const walkBtn = createBtn(icons.walk, () => this.setWalkEnabled(!this.walkEnabled),
+            this.isTouch ? 'Walk' : 'Walk · WASD');
+        walkBtn.setAttribute('aria-pressed', 'false');
+        this.walkBtn = walkBtn;
+
+        wrapper.append(homeBtn, motionBtn, walkBtn, randBtn, sunBtn, spiralBtn, moonBtn, modeBtn, instaBtn);
         container.appendChild(wrapper);
         document.body.appendChild(container);
 
@@ -2014,10 +2071,11 @@ class DuarApp {
         return { camPos, target };
     }
 
-    resetScene(toHome = false) {
-        const lastActivePainting = (!toHome && this.viewMode === 'portfolio' && this.activeDoor?.isPainting) ? this.activeDoor : null;
-        const lastActiveFlora = (!toHome && this.viewMode === 'forest' && (this.activeDoor?.isTree || this.activeDoor?.isRose || this.activeDoor?.isFlora)) ? this.activeDoor : null;
-
+    // Drop whatever is focused (open door, painting, tree) without moving the
+    // camera: the first half of resetScene(), which then flies home. Walking
+    // uses it on its own -- pressing W while looking at a painting should let
+    // you walk on from where you stand, not fly you back to the overview first.
+    _releaseFocus() {
         this.closeAllDoors();
 
         // Restore all hidden trees on exiting full view smoothly
@@ -2041,6 +2099,13 @@ class DuarApp {
         this.daySpeed = AMBIENT_DAY_SPEED;    // back to ambient day/night speed
         this._hideReticle();
         this.setUIVisibility(true); // bring the dock back (door closing / returning to orbit)
+    }
+
+    resetScene(toHome = false) {
+        const lastActivePainting = (!toHome && this.viewMode === 'portfolio' && this.activeDoor?.isPainting) ? this.activeDoor : null;
+        const lastActiveFlora = (!toHome && this.viewMode === 'forest' && (this.activeDoor?.isTree || this.activeDoor?.isRose || this.activeDoor?.isFlora)) ? this.activeDoor : null;
+
+        this._releaseFocus();
 
         let target = new THREE.Vector3(0, 1.6, 0); // Center of motion is always the central sculpture
         let camPos;
@@ -2372,11 +2437,9 @@ class DuarApp {
         });
 
         this.groundMat.onBeforeCompile = (shader) => {
-            shader.uniforms.uForestWave = forestGroundUniforms.uForestWave;
             shader.uniforms.uForestActive = forestGroundUniforms.uForestActive;
 
             shader.vertexShader = `
-                uniform float uForestWave;
                 uniform float uForestActive;
                 varying vec3 vGroundWorldPos;
             \n` + shader.vertexShader;
@@ -2385,13 +2448,13 @@ class DuarApp {
                 '#include <begin_vertex>',
                 `
                 #include <begin_vertex>
-                // Radial ground emergence ripple travelling outward across the disc
                 float rDist = length(position.xy);
-                float waveFront = uForestWave * 145.0;
-                float distToWave = rDist - waveFront;
-                float ripple = sin(clamp(distToWave * 0.22, -3.14, 3.14)) * exp(-distToWave * distToWave * 0.006) * 0.85 * uForestActive * (1.0 - uForestWave * 0.45);
 
-                // Uneven organic forest terrain topography (matches getForestElevation)
+                // Uneven organic forest terrain topography (matches getForestElevation).
+                // uForestActive gates this, and ONLY this now: it is what makes
+                // the ground undulate to meet the trees, which getForestElevation
+                // places on the same surface. The outward emergence ripple that
+                // used to ride on it has been removed.
                 float worldZ = -position.y;
                 float clearingFactor = smoothstep(1.5, 12.0, rDist);
                 float hill1 = sin(position.x * 0.045 + 0.5) * cos(worldZ * 0.040 + 0.8) * 0.65;
@@ -2400,7 +2463,7 @@ class DuarApp {
                 float micro = sin(position.x * 0.38) * cos(worldZ * 0.35) * 0.08;
                 float terrainHeight = (hill1 + hill2 + hill3 + micro) * clearingFactor * uForestActive;
 
-                transformed.z += ripple + terrainHeight;
+                transformed.z += terrainHeight;
                 `
             );
 
@@ -2413,7 +2476,6 @@ class DuarApp {
             );
 
             shader.fragmentShader = `
-                uniform float uForestWave;
                 uniform float uForestActive;
                 varying vec3 vGroundWorldPos;
 
@@ -2497,14 +2559,8 @@ class DuarApp {
                 #include <dithering_fragment>
                 float r = length(vGroundWorldPos.xz);
 
-                // Plain green floor in forest mode with life wave and soft horizon fog dissolve
+                // Forest floor: soft horizon fog dissolve.
                 if (uForestActive > 0.01) {
-                    // Bioluminescent life ring along the active ground wave
-                    float waveFront = uForestWave * 145.0;
-                    float distToWave = abs(r - waveFront);
-                    float edgeGlow = exp(-distToWave * distToWave * 0.015) * (1.0 - uForestWave * 0.7);
-                    gl_FragColor.rgb += vec3(0.06, 0.12, 0.04) * edgeGlow * uForestActive;
-
                     // Infinite horizon blend.
                     //
                     // Mixing to fogColor alone cannot hide the rim: fogColor is a
@@ -2606,6 +2662,25 @@ class DuarApp {
             door.labelEl?.remove();
             releasePaintingTextures(door);
 
+            // Forest trees are clones of page-lifetime GLB templates, and
+            // Mesh.copy() shares geometry and material BY REFERENCE (r183). The
+            // generic disposal below therefore freed the template's own GPU
+            // buffers, shaders and texture maps every time the forest was left,
+            // so every return trip re-uploaded ~62 MB of tree textures and all
+            // their geometry and recompiled the wind/shading shaders -- a large,
+            // avoidable cost landing squarely on the portfolio-to-forest switch.
+            // The only thing a clone owns is its InstancedMesh instance buffer
+            // (InstancedMesh.copy() gives each clone its own), which the generic
+            // path never freed at all. Depth materials are shared too (see
+            // sharedDepthMaterialFor in forest.js). Keyed on `species`, not just
+            // isTree: grass and shrubs are flagged isTree too but own their
+            // materials, so they still take the generic path below.
+            if (door.isTree && door.species) {
+                door.group.traverse(obj => { if (obj.isInstancedMesh) obj.dispose(); });
+                this.scene.remove(door.group);
+                return;
+            }
+
             door.group.traverse(obj => {
                 if (!obj.isMesh) return;
                 // Identity, not name: only the two module-level shared assets survive.
@@ -2697,6 +2772,7 @@ class DuarApp {
         if (this.randBtn) {
             this.randBtn.style.display = mode === 'forest' ? 'none' : 'inline-flex';
         }
+        this._updateWalkUI();
         if (this.updateDockModeBtn) {
             this.updateDockModeBtn();
         }
@@ -2798,7 +2874,6 @@ class DuarApp {
                         value: 0.0,
                         duration: 0.5,
                         onComplete: () => {
-                            forestGroundUniforms.uForestWave.value = 0.0;
                             if (this.groundMat) {
                                 this.groundMat.map = null;
                                 this.groundMat.needsUpdate = true;
@@ -2871,58 +2946,20 @@ class DuarApp {
         this.clearDoors();
 
         if (mode === 'portfolio') await this.buildPortfolioDoors();
-        else if (mode === 'forest') this.buildForest();
+        else if (mode === 'forest') {
+            // Terrain undulation only; the outward emergence wave is gone.
+            forestGroundUniforms.uForestActive.value = 1.0;
+            // Covers the farthest tree's start stagger, its growth, and the few
+            // frames the progressive build itself is spread across.
+            this._pulseShadowUpdates(FOREST_GROW_SPREAD + FOREST_GROW_DURATION + 0.5);
+            // Each tree starts its own grow-in as it is created (see buildForest),
+            // so there is no whole-forest pass here.
+            await this.buildForest();
+        }
         else this.setupDoors();
 
-        if (mode === 'forest') {
-            // 7.05s covers the worst case: a tree at the walk radius gets
-            // baseDelay ~2.85s before its own 4.2s grow tween even starts (see
-            // the delay formula below).
-            this._pulseShadowUpdates(7.2);
-            // Animate ground life wave & meadow grass sprouting outward across the terrain
-            forestGroundUniforms.uForestActive.value = 1.0;
-            forestGroundUniforms.uForestWave.value = 0.0;
-            gsap.to(forestGroundUniforms.uForestWave, {
-                value: 1.0,
-                duration: 3.6,
-                ease: 'power1.out'
-            });
-
-            forestWindUniforms.uGrassGrowth.value = 0.0;
-            gsap.to(forestWindUniforms.uGrassGrowth, {
-                value: 1.0,
-                duration: 3.6,
-                ease: 'power1.out'
-            });
-
-            // Trees emerge slowly and gracefully behind the expanding ground wave
-            this.doors
-                .slice()
-                .sort((a, b) => a.group.position.lengthSq() - b.group.position.lengthSq())
-                .forEach((door) => {
-                    if (door.group.name === 'ForestGrass') {
-                        door.group.scale.set(1, 1, 1);
-                        return;
-                    }
-                    const dist = Math.sqrt(door.group.position.lengthSq());
-                    // Base delay times emergence to the ground wave passing the trunk
-                    const baseDelay = 0.3 + (dist / 120.0) * 3.0 + (Math.sin(door.group.position.x * 2.1) * 0.18);
-
-                    // Trees grow. They do not spring. `back.out` overshoots past
-                    // full size and settles back, which on a 16m tree reads as a
-                    // rubber toy popping out of the ground -- and the separate
-                    // x/z timing made the canopy inflate after the trunk, which
-                    // compounded it. One eased scale on all three axes, slower,
-                    // is what reads as growth.
-                    door.group.scale.set(0.001, 0.001, 0.001);
-                    gsap.to(door.group.scale, {
-                        x: 1.0, y: 1.0, z: 1.0,
-                        duration: 4.2,
-                        ease: 'power2.out',
-                        delay: baseDelay
-                    });
-                });
-        } else {
+        // Forest trees start their own grow-in as buildForest() creates them.
+        if (mode !== 'forest') {
             // Standard doors / paintings pop. Up to 51 painting doors staggered
             // by 0.045s each plus a 1.1s grow -- 3.35s worst case for the last
             // one. See _pulseShadowUpdates for why this needs the same
@@ -3046,7 +3083,165 @@ class DuarApp {
     // as every other view -- see the guards for d.isTree in onClick() and the
     // billboard loop in animate(), which are what keep a tree from being treated
     // like a clickable, camera-facing door once it's sitting in that array.
-    buildForest() {
+    _nextFrame() {
+        return new Promise(resolve => requestAnimationFrame(() => resolve()));
+    }
+
+    // Touch walk pad. Four arrows to look at, one joystick to use: the whole pad
+    // reads where the thumb is relative to its centre, split into eight 45°
+    // sectors, so sliding between arrows works and pressing between two gives
+    // the diagonal. A single captured pointer, which is what lets the other
+    // thumb drag on the canvas to look around at the same time -- OrbitControls
+    // only ever sees pointers that went down on the canvas.
+    _setupWalkPad() {
+        const pad = document.getElementById('walk-pad');
+        if (!pad) return;
+        this.walkPad = pad;
+        const btn = {};
+        pad.querySelectorAll('.wp-btn').forEach(b => { btn[b.dataset.dir] = b; });
+        btn.jump = document.getElementById('wp-jump');
+
+        const DEAD_ZONE = 0.22;          // of the pad radius
+        const SECTOR = Math.sin(Math.PI / 8); // 22.5°: eight equal sectors
+        let activeId = null;
+        let jumpPress = false;           // this press started in the dead zone: a tap, not a drag
+
+        const set = (fwd, back, left, right) => {
+            const k = this._padKeys;
+            k.forward = fwd; k.back = back; k.left = left; k.right = right;
+            btn.forward?.classList.toggle('active', fwd);
+            btn.back?.classList.toggle('active', back);
+            btn.left?.classList.toggle('active', left);
+            btn.right?.classList.toggle('active', right);
+        };
+        const readMag = (e) => {
+            const r = pad.getBoundingClientRect();
+            const nx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+            const ny = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+            return { nx, ny, mag: Math.hypot(nx, ny) };
+        };
+        const read = (e) => {
+            const { nx, ny, mag } = readMag(e);
+            if (mag < DEAD_ZONE) return set(false, false, false, false);
+            const ux = nx / mag, uy = ny / mag;    // screen y points down
+            set(-uy > SECTOR, uy > SECTOR, -ux > SECTOR, ux > SECTOR);
+        };
+        const end = (e) => {
+            if (e.pointerId !== activeId) return;
+            e.stopPropagation();
+            activeId = null;
+            jumpPress = false;
+            btn.jump?.classList.remove('active');
+            set(false, false, false, false);
+        };
+
+        // stopPropagation is load-bearing: the window-level pointerup treats a
+        // short, still press as a click and raycasts into the scene, so without
+        // it tapping an arrow would also fly the camera to the tree behind it.
+        pad.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (activeId !== null) return;
+            activeId = e.pointerId;
+            pad.setPointerCapture(e.pointerId);
+            this.dismissIntro();
+            // The centre of the pad is otherwise dead space (mag < DEAD_ZONE
+            // just means "no direction"), so it doubles as the jump button. A
+            // press that STARTS there is a tap, not a drag: dragging out to an
+            // arrow afterward does not also start walking, so the two actions
+            // never blur into each other.
+            if (readMag(e).mag < DEAD_ZONE) {
+                jumpPress = true;
+                btn.jump?.classList.add('active');
+                this._jumpRequested = true;
+                return;
+            }
+            read(e);
+        });
+        pad.addEventListener('pointermove', (e) => {
+            if (e.pointerId !== activeId || jumpPress) return;
+            e.stopPropagation();
+            read(e);
+        });
+        pad.addEventListener('pointerup', end);
+        pad.addEventListener('pointercancel', end);
+        pad.addEventListener('lostpointercapture', end);
+        // Belt and braces for a pad hidden mid-press (a view switch).
+        this._releaseWalkPad = () => { activeId = null; jumpPress = false; set(false, false, false, false); };
+    }
+
+    // Walk mode on/off: the dock toggle, in every view. Viewer state like the
+    // pause, so it carries across view switches.
+    setWalkEnabled(on) {
+        this.walkEnabled = !!on;
+        if (!this.walkEnabled) {
+            for (const k in this._walkKeys) this._walkKeys[k] = false;
+            // Hand the orbit back to the motion control. The forest keeps it off
+            // regardless (asserted in animate()).
+            if (this.viewMode !== 'forest') this.controls.autoRotate = !this.motionPaused;
+        } else {
+            this.controls.autoRotate = false;
+        }
+        const btn = this.walkBtn;
+        if (btn) {
+            btn.classList.toggle('is-on', this.walkEnabled);
+            btn.setAttribute('aria-pressed', String(this.walkEnabled));
+            const label = this.walkEnabled
+                ? 'Stop walking'
+                : (this.isTouch ? 'Walk' : 'Walk · WASD');
+            btn.setAttribute('aria-label', label);
+            const tip = btn.querySelector('.btn-tip');
+            if (tip) tip.textContent = label;
+        }
+        this._updateWalkUI();
+        this.resetUIHideTimer();
+    }
+
+    // The pad (touch) and the hint under the clock follow walk mode.
+    _updateWalkUI() {
+        const on = !!this.walkEnabled;
+        if (this.walkPad) {
+            if (on && this.isTouch) {
+                this.walkPad.hidden = false;
+                // One frame after display:none lifts, or the fade-in never runs.
+                requestAnimationFrame(() => this.walkPad.classList.add('shown'));
+            } else {
+                this.walkPad.classList.remove('shown');
+                this.walkPad.hidden = true;
+                this._releaseWalkPad?.();
+            }
+        }
+        const clock = document.getElementById('clock');
+        const hint = document.getElementById('clock-hint');
+        if (clock && hint) {
+            // Short on touch: at <=480px the clock pill is only 138px wide.
+            // Touch copy stays short: the clock pill is 138px wide at <=480px.
+            if (on) hint.textContent = this.isTouch ? 'Arrows to walk · Tap to jump' : 'WASD to walk · Space to jump';
+            clock.classList.toggle('hint-visible', on);
+        }
+    }
+
+    // One tree's arrival. The start time is measured from when the build began,
+    // not from when this tree happened to be created, so spreading creation over
+    // several frames doesn't push far trees later than intended.
+    _growTreeIn(group, buildStart) {
+        const dist = Math.hypot(group.position.x, group.position.z);
+        const targetStart = Math.min(1, dist / 100) * FOREST_GROW_SPREAD
+            + Math.sin(group.position.x * 2.1) * 0.06;
+        const elapsed = (performance.now() - buildStart) / 1000;
+        // Trees grow. They do not spring: back.out overshoot on a 16 m tree
+        // reads as a rubber toy popping out of the ground. One eased scale on
+        // all three axes.
+        group.scale.set(0.001, 0.001, 0.001);
+        gsap.to(group.scale, {
+            x: 1.0, y: 1.0, z: 1.0,
+            duration: FOREST_GROW_DURATION,
+            ease: 'power2.out',
+            delay: Math.max(0, targetStart - elapsed),
+        });
+    }
+
+    async buildForest() {
         const speciesMeta = {
             banyan: {
                 title: 'Banyan Tree',
@@ -3070,11 +3265,32 @@ class DuarApp {
             }
         };
 
-        layoutForest(this.quality.treeCountScale).forEach(({ species, x, z, angle, seed, scale }) => {
+        // Nearest first: they also start growing first, so a tree always exists
+        // before its grow-in is due.
+        const placements = layoutForest(this.quality.treeCountScale)
+            .slice()
+            .sort((a, b) => (a.x * a.x + a.z * a.z) - (b.x * b.x + b.z * b.z));
+
+        // Yield once up front so clearDoors()' disposal and the first batch of
+        // creation land in different frames instead of stacking into one.
+        await this._nextFrame();
+        const buildStart = performance.now();
+        let frameStart = buildStart;
+
+        for (let i = 0; i < placements.length; i++) {
+            // Always create at least one per frame, so a slow device still
+            // makes progress; beyond that, stop once the frame's budget is spent.
+            if (i > 0 && performance.now() - frameStart > FOREST_BUILD_FRAME_MS) {
+                await this._nextFrame();
+                frameStart = performance.now();
+            }
+            const { species, x, z, angle, seed, scale } = placements[i];
             const group = createTree(species, { seed, scale });
             const groundY = getForestElevation(x, z);
             group.position.set(x, groundY, z);
             group.rotation.y = angle; // faces outward from centre, not the camera
+            // Scale to ~0 before it's in the scene, so no frame ever shows it full size.
+            this._growTreeIn(group, buildStart);
             this.scene.add(group);
 
             const meta = speciesMeta[species] || { title: `${species.charAt(0).toUpperCase() + species.slice(1)} Tree` };
@@ -3094,7 +3310,7 @@ class DuarApp {
                 swayFreqMult: group.userData.swayFreqMult,
                 swayPhase: Math.sin(seed * 12.9898) * Math.PI, // deterministic, not Math.random()
             });
-        });
+        }
 
         // Floor cover: one static grass field plus a scatter of shrubs
         const { grass, shrubs } = createForestFloor();
@@ -3103,6 +3319,7 @@ class DuarApp {
         shrubs.forEach((shrub) => {
             const groundY = getForestElevation(shrub.position.x, shrub.position.z);
             shrub.position.y = groundY;
+            this._growTreeIn(shrub, buildStart);
             this.scene.add(shrub);
             this.doors.push({
                 group: shrub,
@@ -3651,6 +3868,101 @@ class DuarApp {
         this._hoverDirty = true;
     }
 
+    // WASD / touch-pad walking, any view, while walk mode is on.
+    //
+    // Translating camera.position and controls.target by the SAME vector is
+    // what makes this compatible with OrbitControls: update() rebuilds position
+    // from target + the offset it reads at the top of its own call, so as long
+    // as that offset (position - target) is unchanged, the current zoom and
+    // angle survive the step and orbiting keeps working. Moving position alone
+    // would be silently overwritten by the next update().
+    _applyWalk(dt) {
+        if (!this.walkEnabled) return;
+        // Both flags: portal travel sets isTraveling, flyTo sets isFlying. The
+        // forest-only version checked the first alone, so walking during a
+        // fly-to fought the tween for the camera.
+        if (this.isTraveling || this.isFlying) return;
+
+        // Keyboard OR touch pad. Plain booleans, not a merged object: every frame.
+        const kk = this._walkKeys, pk = this._padKeys;
+        const wFwd = kk.forward || pk.forward, wBack = kk.back || pk.back;
+        const wLeft = kk.left || pk.left, wRight = kk.right || pk.right;
+        if (!(wFwd || wBack || wLeft || wRight)) return;
+
+        // Walking away from a focused painting or tree ends the focus where you
+        // stand, rather than leaving its title and reticle hanging in the air.
+        if (this.activeDoor) this._releaseFocus();
+
+        _walkForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+        _walkForward.y = 0;
+        if (_walkForward.lengthSq() < 1e-6) _walkForward.set(0, 0, -1); // looking straight down/up
+        _walkForward.normalize();
+        _walkRight.set(_walkForward.z, 0, -_walkForward.x); // rotate -90° about Y
+
+        const speed = WALK_SPEED * (kk.boost ? WALK_BOOST : 1) * dt;
+        _walkDelta.set(0, 0, 0);
+        if (wFwd) _walkDelta.add(_walkForward);
+        if (wBack) _walkDelta.sub(_walkForward);
+        if (wRight) _walkDelta.add(_walkRight);
+        if (wLeft) _walkDelta.sub(_walkRight);
+        // Normalize before scaling, or a diagonal (two keys) moves sqrt(2)x
+        // faster than a single key -- the classic strafe-speed bug.
+        if (_walkDelta.lengthSq() > 1e-6) _walkDelta.normalize().multiplyScalar(speed);
+
+        const nextX = this.controls.target.x + _walkDelta.x;
+        const nextZ = this.controls.target.z + _walkDelta.z;
+        const nextR = Math.hypot(nextX, nextZ);
+        // Clamp by scaling the step back at the boundary rather than snapping
+        // to the radius, so walking along the edge slides tangentially.
+        if (nextR > WALK_RADIUS) {
+            const curR = Math.hypot(this.controls.target.x, this.controls.target.z);
+            if (nextR > curR) _walkDelta.multiplyScalar(Math.max(0, (WALK_RADIUS - curR)) / (nextR - curR || 1));
+        }
+        this.camera.position.x += _walkDelta.x;
+        this.camera.position.z += _walkDelta.z;
+        this.controls.target.x += _walkDelta.x;
+        this.controls.target.z += _walkDelta.z;
+        this.dismissIntro();
+    }
+
+    // Vertical motion: gravity-integrated jump plus the ground clamp that was
+    // already here before jumping existed. One function because they are the
+    // same state machine -- the clamp IS how a jump lands. Only
+    // camera.position.y moves, never controls.target.y, matching the clamp's
+    // own long-standing behaviour: OrbitControls.update() re-derives its
+    // offset from (position - target) fresh at the top of every call (see the
+    // comment on _applyWalk), so a height correction made after update() here
+    // is picked up cleanly next frame with nothing to fight it.
+    //
+    // `floorH` is the ground height under the camera's CURRENT x/z, computed
+    // by the caller (forest's undulating terrain vs. the flat geometric-mode
+    // floor use different formulas). Runs every frame regardless of
+    // walkEnabled, because the floor clamp alone -- stopping the mouse from
+    // zooming the camera underground -- predates jumping and must keep working
+    // when walk mode is off; only the launch trigger is walk-gated.
+    _applyJump(dt, floorH) {
+        this.camera.position.y += this._jumpVelocity * dt;
+        this._jumpVelocity -= JUMP_GRAVITY * dt;
+
+        if (this.camera.position.y <= floorH) {
+            this.camera.position.y = floorH;
+            this._jumpVelocity = 0; // landed: grounded again, next request can launch
+        }
+
+        if (this._jumpRequested) {
+            this._jumpRequested = false;
+            // Grounded check, not a walkEnabled check: a request already implies
+            // walk mode was on (see the Space handler and the touch button),
+            // and re-testing position here is what stops a mid-air tap or a
+            // second key-repeat from adding a second launch on top of the fall.
+            if (this.walkEnabled && this._jumpVelocity === 0 && this.camera.position.y <= floorH + 1e-4) {
+                this._jumpVelocity = JUMP_VELOCITY;
+                if (this.activeDoor) this._releaseFocus(); // same as a walk step
+                this.dismissIntro();
+            }
+        }
+    }
+
     animate() {
         this._rafId = requestAnimationFrame(() => this.animate());
         this.time += 0.001;
@@ -4086,56 +4398,13 @@ class DuarApp {
             this.controls.maxPolarAngle = Math.PI * 0.54;
             this.controls.minDistance = 2.0;
 
-            // WASD walk. Translating camera.position and controls.target by the
-            // SAME vector is what makes this compatible with OrbitControls:
-            // update() below rebuilds position from target + the offset it reads
-            // at the top of its own call, so as long as that offset (position -
-            // target) is unchanged, the current zoom/angle survives the step and
-            // orbiting still works normally afterward. Moving position alone
-            // would be silently overwritten by the next update().
-            const wk = this._walkKeys;
-            if (!this.isTraveling && (wk.forward || wk.back || wk.left || wk.right)) {
-                _walkForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
-                _walkForward.y = 0;
-                if (_walkForward.lengthSq() < 1e-6) _walkForward.set(0, 0, -1); // looking straight down/up
-                _walkForward.normalize();
-                _walkRight.set(_walkForward.z, 0, -_walkForward.x); // rotate -90° about Y
-
-                const speed = WALK_SPEED * (wk.boost ? WALK_BOOST : 1) * dt;
-                _walkDelta.set(0, 0, 0);
-                if (wk.forward) _walkDelta.add(_walkForward);
-                if (wk.back) _walkDelta.sub(_walkForward);
-                if (wk.right) _walkDelta.add(_walkRight);
-                if (wk.left) _walkDelta.sub(_walkRight);
-                // Normalize before scaling, or a diagonal (two keys) moves sqrt(2)x
-                // faster than a single key -- the classic strafe-speed bug.
-                if (_walkDelta.lengthSq() > 1e-6) _walkDelta.normalize().multiplyScalar(speed);
-
-                const nextX = this.controls.target.x + _walkDelta.x;
-                const nextZ = this.controls.target.z + _walkDelta.z;
-                const nextR = Math.hypot(nextX, nextZ);
-                // Clamp by scaling the step back at the boundary rather than
-                // snapping to the radius, so walking along the edge slides
-                // tangentially instead of sticking.
-                if (nextR > WALK_RADIUS) {
-                    const curR = Math.hypot(this.controls.target.x, this.controls.target.z);
-                    if (nextR > curR) _walkDelta.multiplyScalar(Math.max(0, (WALK_RADIUS - curR)) / (nextR - curR || 1));
-                }
-                this.camera.position.x += _walkDelta.x;
-                this.camera.position.z += _walkDelta.z;
-                this.controls.target.x += _walkDelta.x;
-                this.controls.target.z += _walkDelta.z;
-                this.dismissIntro();
-            }
-
+            this._applyWalk(dt);
             this.controls.update();
 
-            // Strict terrain height clamp in forest mode: camera can never zoom or dip under the undulating ground
+            // Terrain height clamp in forest mode: camera can never zoom, walk, or
+            // fall under the undulating ground. Also where a jump lands.
             const groundY = getForestElevation(this.camera.position.x, this.camera.position.z);
-            const minH = groundY + 0.75;
-            if (this.camera.position.y < minH) {
-                this.camera.position.y = minH;
-            }
+            this._applyJump(dt, groundY + 0.75);
         } else {
             if (this._occludedTrees && this._occludedTrees.size > 0) {
                 this._occludedTrees.forEach(d => { if (d.group) d.group.visible = true; });
@@ -4143,12 +4412,16 @@ class DuarApp {
             }
             this.controls.maxPolarAngle = Math.PI * 0.54;
             this.controls.minDistance = 0.5;
+            // Many paths switch auto-rotate back on (play, door close, view
+            // switch, fly-to arrival). While walking it is off, asserted here
+            // every frame rather than patched into each of them: auto-orbit
+            // around a target that moves with you drags every step into a curve.
+            if (this.walkEnabled) this.controls.autoRotate = false;
+            this._applyWalk(dt);
             this.controls.update();
 
-            // Ground floor clamp for geometric modes: camera stays above ground (>= 0.4m)
-            if (this.camera.position.y < 0.4) {
-                this.camera.position.y = 0.4;
-            }
+            // Ground floor clamp for geometric modes (>= 0.4m). Also where a jump lands.
+            this._applyJump(dt, 0.4);
         }
 
         if (this.viewMode === 'forest') {

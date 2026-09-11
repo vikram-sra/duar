@@ -56,7 +56,6 @@ export const forestLightUniforms = {
 };
 
 export const forestGroundUniforms = {
-    uForestWave: { value: 0.0 },
     uForestActive: { value: 0.0 }
 };
 
@@ -1547,6 +1546,35 @@ export function preloadForestGLBs(onComplete) {
 // Pre-load immediately in background
 preloadForestGLBs();
 
+// One shadow-depth material per source material, shared by every clone.
+//
+// Object3D.copy() does not carry customDepthMaterial (checked against r183), so
+// each tree clone arrived without one and got a brand-new MeshDepthMaterial
+// per cutout mesh: ~100+ fresh materials on every forest entry, none of them
+// ever disposed. Every clone of a species shares the same source material --
+// and so the same map, alpha test and wind config -- so they can share the
+// depth material too. Lives as long as the template cache does.
+const _sharedDepthMaterials = new WeakMap();
+function sharedDepthMaterialFor(srcMat) {
+    let depthMat = _sharedDepthMaterials.get(srcMat);
+    if (depthMat) return depthMat;
+    depthMat = new THREE.MeshDepthMaterial({
+        depthPacking: THREE.RGBADepthPacking,
+        map: srcMat.map,
+        alphaTest: 0.35
+    });
+    depthMat.side = THREE.DoubleSide;
+    // Shadows sway with the leaves that cast them.
+    if (srcMat._windConfig) {
+        depthMat._hasWindShader = true;
+        depthMat.onBeforeCompile = (shader) => {
+            injectFoliageWind(shader, srcMat._windConfig);
+        };
+    }
+    _sharedDepthMaterials.set(srcMat, depthMat);
+    return depthMat;
+}
+
 export function createTree(speciesKey, { seed = 1, scale = 1 } = {}) {
     const group = new THREE.Group();
     group.name = `Tree_${speciesKey}`;
@@ -1605,19 +1633,7 @@ export function createTree(speciesKey, { seed = 1, scale = 1 } = {}) {
                         child.material.alphaTest = 0.35;
                         child.material.transparent = false;
                         child.material.depthWrite = true;
-                        child.customDepthMaterial = new THREE.MeshDepthMaterial({
-                            depthPacking: THREE.RGBADepthPacking,
-                            map: child.material.map,
-                            alphaTest: 0.35
-                        });
-                        child.customDepthMaterial.side = THREE.DoubleSide;
-                        if (child.material && child.material._windConfig && !child.customDepthMaterial._hasWindShader) {
-                            child.customDepthMaterial._hasWindShader = true;
-                            child.customDepthMaterial.onBeforeCompile = (shader) => {
-                                injectFoliageWind(shader, child.material._windConfig);
-                            };
-                            child.customDepthMaterial.needsUpdate = true;
-                        }
+                        child.customDepthMaterial = sharedDepthMaterialFor(child.material);
                     }
                 }
             }

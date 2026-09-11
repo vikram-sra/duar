@@ -568,8 +568,104 @@
       opacity: 1;
     }
 
+    /* Timezone label and controls hint stacked in one grid cell. */
+    .clock-sub {
+      display: grid;
+      justify-items: end;
+    }
+    .clock-sub > * { grid-area: 1 / 1; }
+
+    /* Controls hint: same type as the timezone label, a touch fainter. */
+    #clock-hint {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.55rem;
+      font-weight: 300;
+      letter-spacing: 0.1rem;
+      color: rgba(255, 255, 255, 0.34);
+      text-transform: uppercase;
+      white-space: nowrap;
+      padding-right: 4px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.6s ease;
+    }
+    #clock.hint-visible #clock-hint { opacity: 1; }
+    /* The timezone takes the slot while it is revealed. */
+    #clock.tz-visible #clock-hint { opacity: 0; transition-duration: 0.3s; }
+
     @media (max-width: 480px) {
       #clock-time { width: 138px; font-size: 0.65rem; padding: 4px 6px; }
+    }
+
+    /* Touch walk pad: lower-left, above the dock line so the two never overlap,
+       where a left thumb rests while the right one drags to look. */
+    #walk-pad {
+      position: fixed;
+      left: calc(18px + env(safe-area-inset-left));
+      bottom: calc(112px + env(safe-area-inset-bottom));
+      width: 124px;
+      height: 124px;
+      z-index: 1001;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      place-items: center;
+      touch-action: none;           /* no scroll or pull-to-refresh mid-walk */
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      opacity: 0;
+      transition: opacity 0.6s ease;
+    }
+    #walk-pad[hidden] { display: none; }
+    #walk-pad.shown { opacity: 1; }
+
+    .wp-btn {
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.05);
+      color: rgba(255, 255, 255, 0.68);
+      border: 0.5px solid rgba(255, 255, 255, 0.14);
+      backdrop-filter: blur(12px) saturate(160%);
+      -webkit-backdrop-filter: blur(12px) saturate(160%);
+      transition: background 0.12s ease, border-color 0.12s ease, transform 0.12s ease, color 0.12s ease;
+      pointer-events: none;         /* the pad reads the pointer, not each button */
+    }
+    .wp-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+    .wp-btn[data-dir="forward"] { grid-area: 1 / 2; }
+    .wp-btn[data-dir="left"]    { grid-area: 2 / 1; }
+    .wp-btn[data-dir="right"]   { grid-area: 2 / 3; }
+    .wp-btn[data-dir="back"]    { grid-area: 3 / 2; }
+    .wp-btn.active {
+      background: rgba(255, 255, 255, 0.24);
+      border-color: rgba(255, 255, 255, 0.42);
+      color: #fff;
+      transform: scale(0.92);
+    }
+
+    /* Jump: the pad's own dead centre (see DEAD_ZONE in _setupWalkPad), where
+       no direction ever registers, so it costs no extra screen space. Round
+       like the arrows but filled, so it reads as a press-button among
+       direction indicators rather than a fifth arrow. */
+    #wp-jump {
+      grid-area: 2 / 2;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: rgba(255, 214, 119, 0.10);
+      border: 0.5px solid rgba(255, 214, 119, 0.3);
+      color: #ffd677;
+    }
+    #wp-jump svg { width: 14px; height: 14px; }
+    #wp-jump.active {
+      background: rgba(255, 214, 119, 0.32);
+      border-color: rgba(255, 214, 119, 0.6);
+      color: #fff2b2;
+      transform: scale(0.88);
     }
 
     .loading {
@@ -772,7 +868,7 @@
       .flat-links a { font-size: 0.6rem; letter-spacing: 0.13rem; }
     }
   </style>
-  <script type="module" crossorigin src="./assets/index-M9LzmnLY.js"></script>
+  <script type="module" crossorigin src="./assets/index-BJCrDG6x.js"></script>
 </head>
 
 <body>
@@ -787,7 +883,25 @@
   <!-- Live clock (Gurmukhi numerals, local timezone) -->
   <div id="clock">
     <span id="clock-time"></span>
-    <span id="clock-tz"></span>
+    <!-- The timezone label and the controls hint share one slot, so showing the
+         hint can never push the view toggle below out of place. -->
+    <span class="clock-sub">
+      <span id="clock-tz"></span>
+      <span id="clock-hint" aria-live="polite"></span>
+    </span>
+  </div>
+
+  <!-- Touch walk pad (any view, touch devices, while walk mode is on -- the
+       dock toggle). Looks like five buttons, behaves as one joystick plus a
+       press-button: the whole pad reads the thumb's position, so sliding
+       between arrows and pressing between two gives a diagonal, and a press
+       that starts in the dead centre jumps instead. -->
+  <div id="walk-pad" role="group" aria-label="Walk" hidden>
+    <span class="wp-btn" data-dir="forward" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></span>
+    <span class="wp-btn" data-dir="left" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></span>
+    <span class="wp-btn" data-dir="right" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+    <span class="wp-btn" data-dir="back" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+    <span id="wp-jump" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 10l6-6 6 6"/></svg></span>
   </div>
 
   <!-- Title wordmark (fades in on load, dismissed on first interaction) -->

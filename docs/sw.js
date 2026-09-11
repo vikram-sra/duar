@@ -10,7 +10,7 @@
 // under an existing filename — and note that the runtime strategy below
 // revalidates in the background too, so a forgotten bump self-corrects on the
 // visitor's next load rather than never.
-const BUILD_ID = 'mtvppdly';
+const BUILD_ID = 'mtx89yc2';
 const ASSET_VERSION = 'v3'; // v3: neem_tree_v2.glb (883,648 -> 255,328 tris/tree), mango_tree_2_v2.glb (49.3 -> 17.3 MB VRAM)
 
 const SHELL = `duar-shell-${BUILD_ID}`;
