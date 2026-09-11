@@ -3926,25 +3926,39 @@ class DuarApp {
     }
 
     // Vertical motion: gravity-integrated jump plus the ground clamp that was
-    // already here before jumping existed. One function because they are the
-    // same state machine -- the clamp IS how a jump lands. Only
-    // camera.position.y moves, never controls.target.y, matching the clamp's
-    // own long-standing behaviour: OrbitControls.update() re-derives its
-    // offset from (position - target) fresh at the top of every call (see the
-    // comment on _applyWalk), so a height correction made after update() here
-    // is picked up cleanly next frame with nothing to fight it.
+    // already here before jumping existed. Only camera.position.y moves, never
+    // controls.target.y, matching the clamp's own long-standing behaviour:
+    // OrbitControls.update() re-derives its offset from (position - target)
+    // fresh at the top of every call (see the comment on _applyWalk), so a
+    // height correction made after update() here is picked up cleanly next
+    // frame with nothing to fight it.
+    //
+    // Gravity is gated on _jumpVelocity !== 0 -- mid-air only -- which is the
+    // whole fix for a real bug this had: applying it unconditionally pulled a
+    // camera that was simply browsing at normal eye height DOWN toward the
+    // floor every single frame, in every view, whether or not walk mode was
+    // even on. Once close enough to the floor that OrbitControls' own
+    // minDistance clamp started fighting it back up, the two corrections
+    // fought every frame -- gravity pulling down, minDistance pushing back out
+    // along the same offset -- which is what "everything is shaking in every
+    // mode" actually was. Outside an actual jump this function now makes
+    // exactly the one passive check it made before jumping existed: don't let
+    // the camera end up below the floor, full stop, never actively pull it
+    // toward one.
     //
     // `floorH` is the ground height under the camera's CURRENT x/z, computed
     // by the caller (forest's undulating terrain vs. the flat geometric-mode
-    // floor use different formulas). Runs every frame regardless of
-    // walkEnabled, because the floor clamp alone -- stopping the mouse from
-    // zooming the camera underground -- predates jumping and must keep working
-    // when walk mode is off; only the launch trigger is walk-gated.
+    // floor use different formulas). The passive clamp runs every frame
+    // regardless of walkEnabled, because stopping the mouse from zooming the
+    // camera underground predates jumping and must keep working when walk
+    // mode is off; only the launch trigger is walk-gated.
     _applyJump(dt, floorH) {
-        this.camera.position.y += this._jumpVelocity * dt;
-        this._jumpVelocity -= JUMP_GRAVITY * dt;
+        if (this._jumpVelocity !== 0) {
+            this.camera.position.y += this._jumpVelocity * dt;
+            this._jumpVelocity -= JUMP_GRAVITY * dt;
+        }
 
-        if (this.camera.position.y <= floorH) {
+        if (this.camera.position.y < floorH) {
             this.camera.position.y = floorH;
             this._jumpVelocity = 0; // landed: grounded again, next request can launch
         }
