@@ -106,11 +106,31 @@ AVAIL_LABEL = {
 }
 
 
-def _head(title, desc, css_href_inline, canonical, og_image=None):
-    og = ''
+def _head(title, desc, css_href_inline, canonical, og_image=None, json_ld=None):
+    extra = []
     if og_image:
-        og = ('  <meta property="og:image" content="%s" />\n'
-              '  <meta name="twitter:card" content="summary_large_image" />\n' % og_image)
+        extra.append('  <meta property="og:image" content="%s" />' % og_image)
+        extra.append('  <meta name="twitter:card" content="summary_large_image" />')
+        extra.append('  <meta name="twitter:image" content="%s" />' % og_image)
+    else:
+        extra.append('  <meta property="og:image" content="https://duar.one/social/og-card.jpg" />')
+        extra.append('  <meta name="twitter:card" content="summary_large_image" />')
+        extra.append('  <meta name="twitter:image" content="https://duar.one/social/og-card.jpg" />')
+
+    extra.append('  <meta name="twitter:title" content="%s" />' % title)
+    extra.append('  <meta name="twitter:description" content="%s" />' % desc)
+    extra.append('  <meta name="twitter:creator" content="@vaveism" />')
+    extra.append('  <meta property="og:site_name" content="Duar &mdash; Vikram Sra" />')
+    extra.append('  <meta property="og:locale" content="en_CA" />')
+    extra.append('  <meta name="author" content="Vikram Sra" />')
+    extra.append('  <meta name="keywords" content="Vikram Sra, oil painter, Toronto artist, Canadian artist, contemporary oil painting, Sikh painter, Punjabi artist, Duar, duar.one, Duar Art Club" />')
+    extra.append('  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />')
+
+    if json_ld:
+        extra.append('  <script type="application/ld+json">\n%s\n  </script>' % json_ld)
+
+    extra_tags = '\n'.join(extra) + '\n'
+
     return (
         '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
         '  <meta charset="UTF-8" />\n'
@@ -130,7 +150,7 @@ def _head(title, desc, css_href_inline, canonical, og_image=None):
         'family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&'
         'family=Outfit:wght@300;400;500&display=swap">\n'
         '  <style>%s</style>\n</head>\n<body>\n'
-        % (title, desc, canonical, title, desc, canonical, og, css_href_inline))
+        % (title, desc, canonical, title, desc, canonical, extra_tags, css_href_inline))
 
 
 def _nav(artist, gurmukhi, here):
@@ -158,6 +178,8 @@ def _footer(artist, insta, email):
 def write_flat_pages(paintings, content, out_root, esc):
     """Generates public/work/index.html and public/about/index.html."""
     import os
+    import json
+    import urllib.parse
 
     artist = content.get('artist', '')
     gur = content.get('gurmukhi', '')
@@ -219,13 +241,62 @@ def write_flat_pages(paintings, content, out_root, esc):
             % (esc(name), len(works), 'work' if len(works) == 1 else 'works', ''.join(items)))
 
     # ---- /work ---------------------------------------------------------------
-    work_desc = '%s %s paintings, with dimensions, medium and availability.' % (
-        'Paintings by ' + artist + '.', len(paintings)) if artist else 'Paintings.'
-    work_desc = esc('Paintings by %s - %d works with dimensions, medium and availability.'
-                    % (artist, len(paintings)))
-    og_img = ('%s/portfolio/%s' % (site, paintings[0]['webp'])) if paintings else None
+    work_title = 'Work &mdash; %s | Oil Painter &amp; Toronto Artist' % artist
+    work_desc = esc('Explore %d original oil paintings and artworks by Toronto artist %s. Complete studio catalogue with dimensions, mediums, series, and availability at duar.one.'
+                    % (len(paintings), artist))
+    og_img = ('%s/portfolio/%s' % (site, urllib.parse.quote(paintings[0]['webp']))) if paintings else None
 
-    work = (_head('Work &mdash; %s' % artist, work_desc, FLAT_CSS, site + '/work/', og_img)
+    # Structured Data (CollectionPage + ItemList of VisualArtwork) for Google & AI
+    artworks_json = []
+    for p in paintings:
+        art = {
+            "@type": "VisualArtwork",
+            "name": p.get("title") or "Untitled",
+            "creator": {
+                "@type": "Person",
+                "name": artist
+            },
+            "artMedium": p.get("medium") or "Oil on canvas",
+            "artform": "Painting",
+            "image": "%s/portfolio/%s" % (site, urllib.parse.quote(p["webp"]))
+        }
+        if p.get("year"):
+            art["dateCreated"] = str(p["year"])
+        if p.get("description"):
+            art["description"] = p["description"]
+        if p.get("widthIn"):
+            art["width"] = "%s in" % p["widthIn"]
+        if p.get("heightIn"):
+            art["height"] = "%s in" % p["heightIn"]
+        artworks_json.append(art)
+
+    work_json_ld = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "@id": "%s/work/#collection" % site,
+        "url": "%s/work/" % site,
+        "name": "Oil Paintings by %s — Studio Catalogue" % artist,
+        "description": work_desc,
+        "about": {
+            "@type": "Person",
+            "name": artist,
+            "jobTitle": "Oil Painter & Visual Artist"
+        },
+        "mainEntity": {
+            "@type": "ItemList",
+            "numberOfItems": len(paintings),
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": idx + 1,
+                    "item": item
+                }
+                for idx, item in enumerate(artworks_json)
+            ]
+        }
+    }, indent=2)
+
+    work = (_head(work_title, work_desc, FLAT_CSS, site + '/work/', og_img, json_ld=work_json_ld)
             + '<div class="wrap">' + _nav(artist, gur, '/work/')
             + '<h1>Work</h1><p class="lede measure">%s</p>' % esc(content.get('workIntro', ''))
             + ''.join(sections) + _footer(artist, insta, email)
@@ -245,9 +316,7 @@ def write_flat_pages(paintings, content, out_root, esc):
     contact = ('<div class="contact"><h2>Enquiries</h2><ul>%s</ul></div>' % ''.join(contact_items)
                ) if contact_items else ''
 
-    # Exhibition history, straight from the CV. Rendered here rather than on a
-    # separate /cv page: seven shows and three residencies read well as a section
-    # and thinly as a page of their own.
+    # Exhibition history, straight from the CV.
     cv_html = ''
     for heading, rows in (content.get('cv') or {}).items():
         if not rows:
@@ -261,19 +330,68 @@ def write_flat_pages(paintings, content, out_root, esc):
             else:
                 sub = esc(where or detail)
             title = esc(r.get('title') or '')
-            # Show titles are titles of works in their own right; venues are not.
             titled = '<cite>%s</cite>' % title if heading != 'Also' else title
             lis.append('<li><span class="yr">%s</span><span class="what">%s%s</span></li>'
                        % (esc(r.get('year') or ''), titled,
                           ('<span class="where">%s</span>' % sub) if sub else ''))
         cv_html += '<section class="cv"><h2>%s</h2><ul>%s</ul></section>' % (esc(heading), ''.join(lis))
 
-    about_desc = esc((st.get('short') or '')[:180])
-    about = (_head('About &mdash; %s' % artist, about_desc, FLAT_CSS, site + '/about/')
+    about_title = 'About %s &mdash; Oil Painter &amp; Toronto Artist | Duar' % artist
+    about_desc = esc('Biography, artist statement, and exhibition history of %s, a Sikh Punjabi oil painter based in Toronto, Canada and founder of Duar Art Club.' % artist)
+    about_og_img = '%s/social/og-card.jpg' % site
+
+    about_json_ld = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "ProfilePage",
+        "@id": "%s/about/#profile" % site,
+        "url": "%s/about/" % site,
+        "name": "About %s — Oil Painter & Toronto Artist" % artist,
+        "description": about_desc,
+        "mainEntity": {
+            "@type": ["Person", "VisualArtist"],
+            "@id": "%s/#artist" % site,
+            "name": artist,
+            "alternateName": [content.get("gurmukhi", ""), "Duar", "Vikramjit Sra"],
+            "jobTitle": "Oil Painter & Visual Artist",
+            "description": content.get("bio", ""),
+            "url": site,
+            "image": "%s/social/og-card.jpg" % site,
+            "sameAs": [
+                ("https://instagram.com/%s" % insta) if insta else "",
+                ("%s/about/" % site)
+            ],
+            "homeLocation": {
+                "@type": "Place",
+                "name": "Toronto, Ontario, Canada",
+                "address": {
+                    "@type": "PostalAddress",
+                    "addressLocality": "Toronto",
+                    "addressRegion": "Ontario",
+                    "addressCountry": "CA"
+                }
+            },
+            "birthPlace": {
+                "@type": "Place",
+                "name": "Punjab, India"
+            },
+            "knowsAbout": [
+                "Oil Painting",
+                "Visual Arts",
+                "Contemporary Art",
+                "Figurative Painting",
+                "Sikh Heritage Art"
+            ],
+            "hasOccupation": {
+                "@type": "Occupation",
+                "name": "Oil Painter",
+                "occupationalCategory": "27-1013.00"
+            }
+        }
+    }, indent=2)
+
+    about = (_head(about_title, about_desc, FLAT_CSS, site + '/about/', about_og_img, json_ld=about_json_ld)
              + '<div class="wrap">' + _nav(artist, gur, '/about/')
              + '<h1>%s</h1>' % esc(artist)
-             # No descriptor line under the name: the statement's first sentence says
-             # who is speaking, and a label above it only said the same thing twice.
              + ('<p class="lede">%s</p>' % esc(content['tagline'])
                 if content.get('tagline') else '')
              + '<div class="about measure"><div class="statement">%s</div></div>' % paras
